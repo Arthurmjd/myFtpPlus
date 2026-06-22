@@ -1,0 +1,49 @@
+#include "core.hpp"
+#include "window.hpp"
+#include "platform/win32_util.hpp"
+
+#include <iostream>
+
+namespace {
+
+int ParsePortArg(int argc, wchar_t** argv) {
+    int port = fds::kDefaultPort;
+    for (int i = 1; i < argc; ++i) {
+        if (std::wstring_view(argv[i]) == L"--port" && i + 1 < argc) {
+            port = _wtoi(argv[++i]);
+        }
+    }
+    return port > 0 ? port : fds::kDefaultPort;
+}
+
+int RunHeadless(int argc, wchar_t** argv) {
+    const int port = ParsePortArg(argc, argv);
+
+    fds::serverapp::ServerCore core;
+    std::string error;
+    if (!core.Start(port, error)) {
+        std::cerr << error << "\n";
+        return 1;
+    }
+
+    std::wcout << L"FDS server is running on port " << port << L". Press Ctrl+C to stop.\n";
+    while (true) {
+        Sleep(1000);
+    }
+    return 0;
+}
+
+}  // namespace
+
+int wmain(int argc, wchar_t** argv) {
+    fds::win32::ScopedSockets sockets;
+
+    for (int i = 1; i < argc; ++i) {
+        if (std::wstring_view(argv[i]) == L"--headless") {
+            return RunHeadless(argc, argv);
+        }
+    }
+
+    fds::serverapp::ServerWindow app(GetModuleHandleW(nullptr));
+    return app.Run(SW_SHOW);
+}
