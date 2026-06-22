@@ -1,0 +1,45 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build All",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/build.ps1"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "Run Server",
+      "type": "shell",
+      "command": "${workspaceFolder}/bin/server.exe",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOn": "Build All"
+    },
+    {
+      "label": "Run Client",
+      "type": "shell",
+      "command": "${workspaceFolder}/bin/client.exe",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOn": "Build All"
+    }
+  ]
+}
+
