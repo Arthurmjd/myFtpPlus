@@ -13,6 +13,37 @@ void SetTaskInfo(const std::shared_ptr<TransferTask>& task, TaskState state, con
     task->info = info;
 }
 
+void SetTaskMessage(const std::shared_ptr<TransferTask>& task, const std::wstring& info) {
+    std::lock_guard lock(task->infoMu);
+    task->info = info;
+}
+
+std::wstring StartInfoText(bool upload, std::uint64_t offset) {
+    if (offset > 0) {
+        return L"断点续传，从 " + Utf8ToWide(FormatBytes(offset)) + L" 继续";
+    }
+    return upload ? L"从头开始上传" : L"从头开始下载";
+}
+
+std::wstring PausedInfoText(std::uint64_t done) {
+    if (done > 0) {
+        return L"已暂停，可从 " + Utf8ToWide(FormatBytes(done)) + L" 继续";
+    }
+    return L"已暂停，可继续传输";
+}
+
+std::wstring CompletedInfoText(std::uint64_t resumeFrom) {
+    return resumeFrom > 0 ? L"断点续传完成，校验通过" : L"传输完成，校验通过";
+}
+
+std::wstring FailedInfoText(const std::shared_ptr<TransferTask>& task, const std::string& message) {
+    std::wstring text = Utf8ToWide(message);
+    if (task->done.load() > 0) {
+        text += L"；可继续续传";
+    }
+    return text;
+}
+
 }  // namespace
 
 std::string JoinRemotePath(const std::string& base, const std::string& name) {
@@ -156,6 +187,16 @@ const std::vector<std::shared_ptr<TransferTask>>& TaskManager::Items() const {
     return items_;
 }
 
+bool TaskManager::HasRunningTasks() const {
+    for (const auto& item : items_) {
+        const auto state = item->state.load();
+        if (state == TaskState::Queued || state == TaskState::Running) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void TaskManager::Pause(const std::shared_ptr<TransferTask>& task) const {
     if (task) {
         task->pauseWanted = true;
@@ -182,13 +223,21 @@ void TaskManager::Start(const std::shared_ptr<TransferTask>& task, const Connect
     task->state = TaskState::Running;
     task->pauseWanted = false;
     task->cancelWanted = false;
+    task->speed = 0.0;
 
     std::thread([task, connection] {
         std::uint64_t lastDone = task->done.load();
         auto lastTick = std::chrono::steady_clock::now();
+        bool startInfoSet = false;
+
         auto progress = [&](std::uint64_t done, std::uint64_t total) {
             task->done = done;
             task->total = total;
+            if (!startInfoSet) {
+                task->resumeFrom = done;
+                SetTaskMessage(task, StartInfoText(task->upload, done));
+                startInfoSet = true;
+            }
 
             const auto now = std::chrono::steady_clock::now();
             const auto elapsed = std::chrono::duration<double>(now - lastTick).count();
@@ -213,16 +262,16 @@ void TaskManager::Start(const std::shared_ptr<TransferTask>& task, const Connect
 
         switch (result.outcome) {
             case TransferOutcome::Success:
-                SetTaskInfo(task, TaskState::Completed, L"哈希校验通过");
+                SetTaskInfo(task, TaskState::Completed, CompletedInfoText(task->resumeFrom.load()));
                 return;
             case TransferOutcome::Paused:
-                SetTaskInfo(task, TaskState::Paused, L"已暂停，可继续传输");
+                SetTaskInfo(task, TaskState::Paused, PausedInfoText(task->done.load()));
                 return;
             case TransferOutcome::Cancelled:
                 SetTaskInfo(task, TaskState::Cancelled, L"任务已取消");
                 return;
             case TransferOutcome::Failed:
-                SetTaskInfo(task, TaskState::Failed, Utf8ToWide(result.message));
+                SetTaskInfo(task, TaskState::Failed, FailedInfoText(task, result.message));
                 return;
         }
     }).detach();

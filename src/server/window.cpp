@@ -3,7 +3,6 @@
 #include "platform/win32_util.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <commctrl.h>
 #include <windowsx.h>
 
@@ -37,6 +36,8 @@ constexpr int IDC_TRANSFERS = 1209;
 constexpr UINT_PTR kRefreshTimerId = 1;
 constexpr int kBaseWidth = 1280;
 constexpr int kBaseHeight = 860;
+constexpr int kMinTrackWidth = 1180;
+constexpr int kMinTrackHeight = 820;
 constexpr int kAreaCount = 4;
 constexpr int kPermCount = 4;
 
@@ -149,16 +150,16 @@ void ServerWindow::BuildUi() {
         return ctrl;
     };
 
-    makeStatic(L"服务", 32, 24, 80, 34, titleFont_);
-    makeLine(120, 42, 1118);
-    makeStatic(L"端口", 40, 78, 70, 24);
-    portEdit_ = makeEdit(L"9527", 40, 108, 180, 36, IDC_PORT);
-    startBtn_ = makeButton(L"启动服务", 240, 108, 128, 38, IDC_START);
-    makeStatic(L"状态", 404, 78, 70, 24);
-    status_ = makeStatic(L"", 404, 112, 820, 28, nullptr, 0, IDC_STATUS);
+    serviceTitle_ = makeStatic(L"服务", 24, 24, 80, 34, titleFont_);
+    serviceLine_ = makeLine(112, 42, 1130);
+    portLabel_ = makeStatic(L"端口", 24, 76, 54, 24);
+    portEdit_ = makeEdit(L"9527", 82, 70, 120, 34, IDC_PORT);
+    startBtn_ = makeButton(L"启动服务", 214, 68, 124, 36, IDC_START);
+    statusLabel_ = makeStatic(L"状态", 24, 118, 54, 24);
+    status_ = makeStatic(L"", 82, 118, 1160, 26, nullptr, 0, IDC_STATUS);
 
-    makeStatic(L"用户", 32, 182, 80, 34, titleFont_);
-    makeLine(120, 198, 186);
+    userTitle_ = makeStatic(L"用户", 24, 166, 80, 34, titleFont_);
+    userLine_ = makeLine(112, 184, 180);
     userList_ = Place(CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL, 40, 224,
                                     266, 370, hwnd_, reinterpret_cast<HMENU>(IDC_USER_LIST), instance_, nullptr),
                       40, 224, 266, 370);
@@ -166,43 +167,34 @@ void ServerWindow::BuildUi() {
     newBtn_ = makeButton(L"新建", 40, 614, 126, 38, IDC_USER_NEW);
     deleteBtn_ = makeButton(L"删除", 180, 614, 126, 38, IDC_USER_DELETE);
 
-    makeStatic(L"信息", 334, 182, 80, 34, titleFont_);
-    makeLine(420, 198, 230);
-    makeStatic(L"用户名", 334, 224, 90, 24);
+    infoTitle_ = makeStatic(L"账号", 334, 166, 80, 34, titleFont_);
+    infoLine_ = makeLine(422, 184, 230);
+    userNameLabel_ = makeStatic(L"用户", 334, 224, 90, 24);
     userName_ = makeEdit(L"", 334, 254, 260, 36, IDC_USER_NAME);
-    makeStatic(L"密码", 334, 306, 90, 24);
+    userPassLabel_ = makeStatic(L"密码", 334, 306, 90, 24);
     userPass_ = makeEdit(L"", 334, 336, 260, 36, IDC_USER_PASS, ES_PASSWORD);
     userEnabled_ = makeButton(L"启用", 334, 392, 92, 28, IDC_USER_ENABLED, BS_AUTOCHECKBOX);
     userAdmin_ = makeButton(L"管理员", 442, 392, 118, 28, IDC_USER_ADMIN, BS_AUTOCHECKBOX);
-    makeStatic(L"主目录", 334, 442, 90, 24);
+    homeLabel_ = makeStatic(L"主目录", 334, 442, 90, 24);
     homeHint_ = makeStatic(L"", 334, 472, 300, 28, nullptr, 0, IDC_HOME_HINT);
-    makeStatic(L"权限", 334, 520, 80, 34, titleFont_);
-    makeLine(420, 536, 230);
-
-    const int permHeaderY = 566;
-    const int permRowY = 600;
-    const int permLabelWidth = 108;
-    const int permButtonWidth = 54;
-    const int permGap = 10;
+    permTitle_ = makeStatic(L"权限", 334, 520, 80, 34, titleFont_);
+    permLine_ = makeLine(422, 536, 230);
     for (int perm = 0; perm < kPermCount; ++perm) {
-        const int x = 334 + permLabelWidth + perm * (permButtonWidth + permGap);
-        makeStatic(kPermLabels[perm], x, permHeaderY, permButtonWidth, 22, nullptr, SS_CENTER);
+        permHeaderLabels_[perm] = makeStatic(kPermLabels[perm], 334, 566, 54, 22, nullptr, SS_CENTER);
     }
     for (int area = 0; area < kAreaCount; ++area) {
-        const int y = permRowY + area * 42;
-        makeStatic(kAreaLabels[area], 334, y + 4, permLabelWidth, 24);
+        permAreaLabels_[area] = makeStatic(kAreaLabels[area], 334, 600, 108, 24);
         for (int perm = 0; perm < kPermCount; ++perm) {
-            const int x = 334 + permLabelWidth + perm * (permButtonWidth + permGap);
             permissionButtons_[area][perm] =
-                makeButton(kPermLabels[perm], x, y, permButtonWidth, 28, IDC_PERM_BASE + area * kPermCount + perm,
+                makeButton(kPermLabels[perm], 446, 600, 54, 28, IDC_PERM_BASE + area * kPermCount + perm,
                            BS_AUTOCHECKBOX | BS_PUSHLIKE);
         }
     }
     saveBtn_ = makeButton(L"保存", 334, 778, 126, 38, IDC_USER_SAVE);
 
-    makeStatic(L"目录", 680, 182, 80, 34, titleFont_);
-    makeLine(766, 198, 472);
-    makeStatic(L"路径", 680, 224, 70, 24);
+    dirTitle_ = makeStatic(L"目录", 680, 166, 80, 34, titleFont_);
+    dirLine_ = makeLine(768, 184, 474);
+    dirPathLabel_ = makeStatic(L"路径", 680, 224, 70, 24);
     dirPath_ = makeEdit(L"/", 680, 254, 430, 36, IDC_DIR_PATH, ES_READONLY);
     dirUpBtn_ = makeButton(L"上级", 1124, 254, 54, 36, IDC_DIR_UP);
     dirRefreshBtn_ = makeButton(L"刷新", 1188, 254, 54, 36, IDC_DIR_REFRESH);
@@ -218,14 +210,14 @@ void ServerWindow::BuildUi() {
     win32::AddColumn(dirList_, 3, 140, L"修改时间");
     win32::AddColumn(dirList_, 4, 120, L"路径");
 
-    makeStatic(L"名称", 680, 614, 70, 24);
+    dirNameLabel_ = makeStatic(L"名称", 680, 614, 70, 24);
     dirInput_ = makeEdit(L"", 680, 644, 240, 36, IDC_DIR_INPUT);
     dirMakeBtn_ = makeButton(L"新建", 936, 644, 92, 36, IDC_DIR_MAKE);
     dirRenameBtn_ = makeButton(L"重命名", 1042, 644, 92, 36, IDC_DIR_RENAME);
     dirDeleteBtn_ = makeButton(L"删除", 1148, 644, 94, 36, IDC_DIR_DELETE);
 
-    makeStatic(L"传输", 32, 694, 80, 34, titleFont_);
-    makeLine(120, 710, 1118);
+    transferTitle_ = makeStatic(L"传输", 24, 694, 80, 34, titleFont_);
+    transferLine_ = makeLine(112, 712, 1130);
     transferList_ =
         Place(CreateWindowW(WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LVS_REPORT | LVS_SINGLESEL, 40, 736,
                             1202, 80, hwnd_, reinterpret_cast<HMENU>(IDC_TRANSFERS), instance_, nullptr),
@@ -253,16 +245,159 @@ void ServerWindow::BuildUi() {
 void ServerWindow::LayoutControls() {
     RECT client{};
     GetClientRect(hwnd_, &client);
-    const double scaleX = std::max(0.4, static_cast<double>(client.right) / static_cast<double>(kBaseWidth));
-    const double scaleY = std::max(0.4, static_cast<double>(client.bottom) / static_cast<double>(kBaseHeight));
 
-    for (const auto& item : layoutItems_) {
-        const int x = static_cast<int>(std::lround(item.rect.left * scaleX));
-        const int y = static_cast<int>(std::lround(item.rect.top * scaleY));
-        const int w = std::max(1, static_cast<int>(std::lround((item.rect.right - item.rect.left) * scaleX)));
-        const int h = std::max(1, static_cast<int>(std::lround((item.rect.bottom - item.rect.top) * scaleY)));
-        MoveWindow(item.hwnd, x, y, w, h, TRUE);
+    const int clientWidth = std::max(800L, client.right - client.left);
+    const int clientHeight = std::max(700L, client.bottom - client.top);
+    const int margin = 24;
+    const int gap = 18;
+    const int titleWidth = 72;
+    const int titleHeight = 32;
+    const int labelHeight = 22;
+    const int editHeight = 34;
+    const int buttonHeight = 36;
+    const int smallGap = 8;
+    const int sectionTopHeight = 124;
+    const int bottomSectionHeight = std::clamp(clientHeight / 4, 180, 240);
+    const int middleTop = margin + sectionTopHeight + gap;
+    const int bottomTop = clientHeight - margin - bottomSectionHeight;
+    const int middleHeight = std::max(360, bottomTop - gap - middleTop);
+    const int availableWidth = clientWidth - margin * 2 - gap * 2;
+
+    int leftWidth = std::clamp(availableWidth / 5, 220, 280);
+    int middleWidth = std::clamp(static_cast<int>(availableWidth * 0.30), 320, 390);
+    int rightWidth = availableWidth - leftWidth - middleWidth;
+    if (rightWidth < 360) {
+        const int need = 360 - rightWidth;
+        const int cutMiddle = std::min(need, std::max(0, middleWidth - 300));
+        middleWidth -= cutMiddle;
+        rightWidth += cutMiddle;
     }
+    if (rightWidth < 360) {
+        const int need = 360 - rightWidth;
+        const int cutLeft = std::min(need, std::max(0, leftWidth - 210));
+        leftWidth -= cutLeft;
+        rightWidth += cutLeft;
+    }
+
+    const int leftX = margin;
+    const int middleX = leftX + leftWidth + gap;
+    const int rightX = middleX + middleWidth + gap;
+
+    auto move = [](HWND hwnd, int x, int y, int w, int h) {
+        if (!hwnd) {
+            return;
+        }
+        MoveWindow(hwnd, x, y, std::max(1, w), std::max(1, h), TRUE);
+    };
+
+    move(serviceTitle_, margin, margin, titleWidth, titleHeight);
+    move(serviceLine_, margin + 84, margin + 16, clientWidth - margin * 2 - 84, 1);
+
+    const int serviceRow1Y = margin + 48;
+    const int serviceRow2Y = serviceRow1Y + 46;
+    move(portLabel_, margin, serviceRow1Y + 6, 44, labelHeight);
+    move(portEdit_, margin + 50, serviceRow1Y, 124, editHeight);
+    move(startBtn_, margin + 188, serviceRow1Y - 1, 120, buttonHeight);
+    move(statusLabel_, margin, serviceRow2Y + 4, 44, labelHeight);
+    move(status_, margin + 50, serviceRow2Y + 2, clientWidth - margin * 2 - 50, 26);
+
+    move(userTitle_, leftX, middleTop, titleWidth, titleHeight);
+    move(userLine_, leftX + 84, middleTop + 16, leftWidth - 84, 1);
+    const int userListY = middleTop + 46;
+    const int userButtonsY = middleTop + middleHeight - buttonHeight;
+    const int userListHeight = std::max(160, userButtonsY - 14 - userListY);
+    move(userList_, leftX, userListY, leftWidth, userListHeight);
+    const int userButtonGap = 12;
+    const int userNewWidth = (leftWidth - userButtonGap) / 2;
+    move(newBtn_, leftX, userButtonsY, userNewWidth, buttonHeight);
+    move(deleteBtn_, leftX + userNewWidth + userButtonGap, userButtonsY, leftWidth - userNewWidth - userButtonGap,
+         buttonHeight);
+
+    move(infoTitle_, middleX, middleTop, titleWidth, titleHeight);
+    move(infoLine_, middleX + 84, middleTop + 16, middleWidth - 84, 1);
+    const int formLabelWidth = 56;
+    const int formValueX = middleX + formLabelWidth + 10;
+    const int formValueWidth = middleWidth - formLabelWidth - 10;
+    int formY = middleTop + 46;
+    move(userNameLabel_, middleX, formY + 6, formLabelWidth, labelHeight);
+    move(userName_, formValueX, formY, formValueWidth, editHeight);
+    formY += 46;
+    move(userPassLabel_, middleX, formY + 6, formLabelWidth, labelHeight);
+    move(userPass_, formValueX, formY, formValueWidth, editHeight);
+    formY += 46;
+    move(userEnabled_, middleX, formY + 4, 86, 24);
+    move(userAdmin_, middleX + 98, formY + 4, 116, 24);
+    move(saveBtn_, middleX + middleWidth - 100, formY - 2, 100, buttonHeight);
+    formY += 42;
+    move(homeLabel_, middleX, formY + 4, formLabelWidth, labelHeight);
+    move(homeHint_, formValueX, formY + 4, formValueWidth, 24);
+    formY += 40;
+
+    move(permTitle_, middleX, formY, titleWidth, titleHeight);
+    move(permLine_, middleX + 84, formY + 16, middleWidth - 84, 1);
+    const int permHeaderY = formY + 34;
+    const int permLabelWidth = 96;
+    const int permButtonGap = 8;
+    const int permButtonWidth = std::max(48, (middleWidth - permLabelWidth - permButtonGap * 3) / 4);
+    const int permStartX = middleX + permLabelWidth;
+    for (int perm = 0; perm < kPermCount; ++perm) {
+        const int x = permStartX + perm * (permButtonWidth + permButtonGap);
+        move(permHeaderLabels_[perm], x, permHeaderY, permButtonWidth, 22);
+    }
+    const int permRowY = permHeaderY + 26;
+    for (int area = 0; area < kAreaCount; ++area) {
+        const int y = permRowY + area * 34;
+        move(permAreaLabels_[area], middleX, y + 2, permLabelWidth - 8, 24);
+        for (int perm = 0; perm < kPermCount; ++perm) {
+            const int x = permStartX + perm * (permButtonWidth + permButtonGap);
+            move(permissionButtons_[area][perm], x, y, permButtonWidth, 28);
+        }
+    }
+
+    move(dirTitle_, rightX, middleTop, titleWidth, titleHeight);
+    move(dirLine_, rightX + 84, middleTop + 16, rightWidth - 84, 1);
+
+    const bool compactDirHeader = rightWidth < 520;
+    const bool stackedDirButtons = rightWidth < 620;
+    int dirY = middleTop + 46;
+    move(dirPathLabel_, rightX, dirY + 6, 44, labelHeight);
+    if (!compactDirHeader) {
+        const int pathWidth = rightWidth - 52 - 70 - smallGap - 70;
+        move(dirPath_, rightX + 52, dirY, pathWidth, editHeight);
+        move(dirUpBtn_, rightX + 52 + pathWidth + smallGap, dirY - 1, 70, buttonHeight);
+        move(dirRefreshBtn_, rightX + 52 + pathWidth + smallGap + 70 + smallGap, dirY - 1, 70, buttonHeight);
+        dirY += 48;
+    } else {
+        move(dirPath_, rightX + 52, dirY, rightWidth - 52, editHeight);
+        move(dirUpBtn_, rightX, dirY + 42, 90, buttonHeight);
+        move(dirRefreshBtn_, rightX + 98, dirY + 42, 90, buttonHeight);
+        dirY += 86;
+    }
+
+    const int dirFooterTop = middleTop + middleHeight - (stackedDirButtons ? 82 : 38);
+    const int dirListHeight = std::max(150, dirFooterTop - 14 - dirY);
+    move(dirList_, rightX, dirY, rightWidth, dirListHeight);
+
+    if (!stackedDirButtons) {
+        move(dirNameLabel_, rightX, dirFooterTop + 6, 44, labelHeight);
+        const int actionWidth = 82 + 96 + 82;
+        const int inputWidth = std::max(150, rightWidth - 52 - actionWidth - smallGap * 2);
+        const int inputX = rightX + 52;
+        move(dirInput_, inputX, dirFooterTop, inputWidth, editHeight);
+        move(dirMakeBtn_, inputX + inputWidth + smallGap, dirFooterTop - 1, 82, buttonHeight);
+        move(dirRenameBtn_, inputX + inputWidth + smallGap + 82 + smallGap, dirFooterTop - 1, 96, buttonHeight);
+        move(dirDeleteBtn_, rightX + rightWidth - 82, dirFooterTop - 1, 82, buttonHeight);
+    } else {
+        move(dirNameLabel_, rightX, dirFooterTop + 6, 44, labelHeight);
+        move(dirInput_, rightX + 52, dirFooterTop, rightWidth - 52, editHeight);
+        move(dirMakeBtn_, rightX, dirFooterTop + 44, 90, buttonHeight);
+        move(dirRenameBtn_, rightX + 98, dirFooterTop + 44, 106, buttonHeight);
+        move(dirDeleteBtn_, rightX + 212, dirFooterTop + 44, 90, buttonHeight);
+    }
+
+    move(transferTitle_, margin, bottomTop, titleWidth, titleHeight);
+    move(transferLine_, margin + 84, bottomTop + 16, clientWidth - margin * 2 - 84, 1);
+    move(transferList_, margin, bottomTop + 46, clientWidth - margin * 2, clientHeight - margin - (bottomTop + 46));
 
     ResizeListColumns();
 }
@@ -274,19 +409,22 @@ void ServerWindow::ResizeListColumns() {
     ListView_SetColumnWidth(dirList_, 0, static_cast<int>(dirWidth * 0.24));
     ListView_SetColumnWidth(dirList_, 1, static_cast<int>(dirWidth * 0.12));
     ListView_SetColumnWidth(dirList_, 2, static_cast<int>(dirWidth * 0.14));
-    ListView_SetColumnWidth(dirList_, 3, static_cast<int>(dirWidth * 0.25));
-    ListView_SetColumnWidth(dirList_, 4, std::max(90, dirWidth - static_cast<int>(dirWidth * 0.75)));
+    ListView_SetColumnWidth(dirList_, 3, static_cast<int>(dirWidth * 0.21));
+    ListView_SetColumnWidth(dirList_, 4, std::max(100, dirWidth - static_cast<int>(dirWidth * 0.71)));
 
     GetClientRect(transferList_, &rc);
     const int transferWidth = std::max(900L, rc.right - rc.left);
     ListView_SetColumnWidth(transferList_, 0, 60);
     ListView_SetColumnWidth(transferList_, 1, 100);
     ListView_SetColumnWidth(transferList_, 2, 80);
-    ListView_SetColumnWidth(transferList_, 3, static_cast<int>(transferWidth * 0.27));
+    ListView_SetColumnWidth(transferList_, 3, static_cast<int>(transferWidth * 0.29));
     ListView_SetColumnWidth(transferList_, 4, static_cast<int>(transferWidth * 0.14));
     ListView_SetColumnWidth(transferList_, 5, 90);
-    ListView_SetColumnWidth(transferList_, 6, static_cast<int>(transferWidth * 0.22));
-    ListView_SetColumnWidth(transferList_, 7, static_cast<int>(transferWidth * 0.12));
+    ListView_SetColumnWidth(transferList_, 6, static_cast<int>(transferWidth * 0.19));
+    ListView_SetColumnWidth(transferList_, 7, std::max(120, transferWidth - 60 - 100 - 80 -
+                                                                static_cast<int>(transferWidth * 0.29) -
+                                                                static_cast<int>(transferWidth * 0.14) - 90 -
+                                                                static_cast<int>(transferWidth * 0.19)));
 }
 
 void ServerWindow::RefreshStatus() {
@@ -755,6 +893,12 @@ LRESULT CALLBACK ServerWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
         case WM_CREATE:
             self->BuildUi();
             return 0;
+        case WM_GETMINMAXINFO: {
+            auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
+            info->ptMinTrackSize.x = kMinTrackWidth;
+            info->ptMinTrackSize.y = kMinTrackHeight;
+            return 0;
+        }
         case WM_SIZE:
             self->LayoutControls();
             return 0;

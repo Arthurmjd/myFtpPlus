@@ -60,6 +60,7 @@ struct TransferTask {
     bool upload = false;
     std::wstring local;
     std::string remote;
+    std::atomic<std::uint64_t> resumeFrom{0};
     std::atomic<std::uint64_t> done{0};
     std::atomic<std::uint64_t> total{0};
     std::atomic<double> speed{0.0};
@@ -78,6 +79,7 @@ public:
                                       const ConnectionInfo& connection);
     std::shared_ptr<TransferTask> GetAt(int index) const;
     const std::vector<std::shared_ptr<TransferTask>>& Items() const;
+    bool HasRunningTasks() const;
 
     void Pause(const std::shared_ptr<TransferTask>& task) const;
     void Resume(const std::shared_ptr<TransferTask>& task, const ConnectionInfo& connection);

@@ -1,5 +1,6 @@
 #include "core.hpp"
 
+#include <chrono>
 #include <fstream>
 
 namespace fds::serverapp {
@@ -103,13 +104,29 @@ void ServerCore::Stop() {
     }
 
     running_ = false;
+    std::vector<SOCKET> transferSockets;
+    {
+        std::lock_guard lock(mu_);
+        transferSockets = transferSockets_;
+    }
+    for (auto sock : transferSockets) {
+        shutdown(sock, SD_BOTH);
+    }
     CloseSocket(listenSock_);
     if (loopThread_.joinable()) {
         loopThread_.join();
     }
 
+    for (int i = 0; i < 100 && activeTransfers_.load() > 0; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
     std::lock_guard lock(mu_);
+    const std::set<SOCKET> transferSet(transferSockets_.begin(), transferSockets_.end());
     for (auto sock : clientSockets_) {
+        if (transferSet.contains(sock)) {
+            continue;
+        }
         auto temp = sock;
         CloseSocket(temp);
     }
@@ -759,17 +776,46 @@ void ServerCore::HandleCommand(SOCKET sock, const NetPacket& req, bool& removeSo
 }
 
 void ServerCore::SpawnUploadWorker(SOCKET sock, NetPacket req) {
+    RegisterTransferSocket(sock);
     std::thread([this, sock, req] {
         TransferCounterGuard counter(activeTransfers_);
+        struct TransferSocketGuard {
+            ServerCore* self;
+            SOCKET sock;
+            ~TransferSocketGuard() {
+                self->UnregisterTransferSocket(sock);
+            }
+        } transferGuard{this, sock};
         UploadWorker(sock, req);
     }).detach();
 }
 
 void ServerCore::SpawnDownloadWorker(SOCKET sock, NetPacket req) {
+    RegisterTransferSocket(sock);
     std::thread([this, sock, req] {
         TransferCounterGuard counter(activeTransfers_);
+        struct TransferSocketGuard {
+            ServerCore* self;
+            SOCKET sock;
+            ~TransferSocketGuard() {
+                self->UnregisterTransferSocket(sock);
+            }
+        } transferGuard{this, sock};
         DownloadWorker(sock, req);
     }).detach();
+}
+
+void ServerCore::RegisterTransferSocket(SOCKET sock) {
+    std::lock_guard lock(mu_);
+    transferSockets_.push_back(sock);
+}
+
+void ServerCore::UnregisterTransferSocket(SOCKET sock) {
+    std::lock_guard lock(mu_);
+    const auto it = std::find(transferSockets_.begin(), transferSockets_.end(), sock);
+    if (it != transferSockets_.end()) {
+        transferSockets_.erase(it);
+    }
 }
 
 void ServerCore::UploadWorker(SOCKET sock, const NetPacket& req) {
@@ -802,6 +848,7 @@ void ServerCore::UploadWorker(SOCKET sock, const NetPacket& req) {
     std::uint64_t offset = std::filesystem::exists(resolved->real, ec) ? std::filesystem::file_size(resolved->real, ec) : 0;
     const std::uint64_t requestedTotal = beginMeta.contains("size") ? ParseU64(beginMeta.at("size")) : 0;
     const std::uint64_t total = std::max(requestedTotal, offset);
+    const std::uint64_t resumeOffset = offset;
 
     std::ofstream out(resolved->real, std::ios::binary | std::ios::app);
     if (!out) {
@@ -811,17 +858,24 @@ void ServerCore::UploadWorker(SOCKET sock, const NetPacket& req) {
 
     const auto transferId = StartTransfer(session->username, "上传", resolved->virtualPath, total);
     UpdateTransfer(transferId, offset, total);
+    UpdateTransfer(transferId, offset, total, {},
+                   resumeOffset > 0 ? "断点续传，从 " + FormatBytes(resumeOffset) + " 继续" : "从头开始上传");
 
     if (!SendPacket(sock, Cmd::UploadReady, req.seq, req.session, SerializePairs({{"offset", std::to_string(offset)}}))) {
-        FinishTransfer(transferId, "中断", "准备响应失败", offset, total);
+        FinishTransfer(transferId, "中断", running_ ? "准备响应失败" : "服务已停止", offset, total);
         return;
     }
 
     std::string expectedHash = beginMeta.contains("sha256") ? beginMeta.at("sha256") : "";
     while (true) {
+        if (!running_) {
+            FinishTransfer(transferId, "中断", "服务已停止", offset, std::max(total, offset));
+            return;
+        }
+
         NetPacket packet;
         if (!RecvPacket(sock, packet)) {
-            FinishTransfer(transferId, "中断", "连接断开", offset, total);
+            FinishTransfer(transferId, "中断", running_ ? "连接断开" : "服务已停止", offset, total);
             return;
         }
 
@@ -901,19 +955,27 @@ void ServerCore::DownloadWorker(SOCKET sock, const NetPacket& req) {
     if (offset > total) {
         offset = 0;
     }
+    const std::uint64_t resumeOffset = offset;
 
     const auto transferId = StartTransfer(session->username, "下载", resolved->virtualPath, total);
     UpdateTransfer(transferId, offset, total);
+    UpdateTransfer(transferId, offset, total, {},
+                   resumeOffset > 0 ? "断点续传，从 " + FormatBytes(resumeOffset) + " 继续" : "从头开始下载");
 
     in.seekg(static_cast<std::streamoff>(offset));
     if (!SendPacket(sock, Cmd::DownloadMeta, req.seq, req.session,
                     SerializePairs({{"size", std::to_string(total)}, {"offset", std::to_string(offset)}}))) {
-        FinishTransfer(transferId, "中断", "元数据响应失败", offset, total);
+        FinishTransfer(transferId, "中断", running_ ? "元数据响应失败" : "服务已停止", offset, total);
         return;
     }
 
     std::vector<char> buffer(kChunkSize);
     while (in) {
+        if (!running_) {
+            FinishTransfer(transferId, "中断", "服务已停止", offset, total);
+            return;
+        }
+
         in.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
         const auto got = in.gcount();
         if (got <= 0) {
@@ -922,7 +984,7 @@ void ServerCore::DownloadWorker(SOCKET sock, const NetPacket& req) {
 
         if (!SendPacket(sock, Cmd::DownloadData, req.seq, req.session,
                         std::string(buffer.data(), static_cast<std::size_t>(got)))) {
-            FinishTransfer(transferId, "中断", "发送数据失败", offset, total);
+            FinishTransfer(transferId, "中断", running_ ? "发送数据失败" : "服务已停止", offset, total);
             return;
         }
 
@@ -932,7 +994,7 @@ void ServerCore::DownloadWorker(SOCKET sock, const NetPacket& req) {
 
     if (!SendPacket(sock, Cmd::DownloadDone, req.seq, req.session,
                     SerializePairs({{"size", std::to_string(total)}, {"sha256", Sha256File(resolved->real)}}))) {
-        FinishTransfer(transferId, "中断", "完成响应失败", offset, total);
+        FinishTransfer(transferId, "中断", running_ ? "完成响应失败" : "服务已停止", offset, total);
         return;
     }
 

@@ -634,6 +634,11 @@ void ClientWindow::ConnectServer() {
 }
 
 void ClientWindow::Logout() {
+    if (taskManager_.HasRunningTasks()) {
+        AlertUser(L"当前还有传输任务在进行，请先暂停、取消或等待完成后再退出登录");
+        return;
+    }
+
     client_.Disconnect();
     ResetBrowserState();
     win32::SetText(currentUser_, L"用户: 未登录");

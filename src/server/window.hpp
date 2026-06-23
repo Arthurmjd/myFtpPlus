@@ -57,6 +57,32 @@ private:
 
     std::vector<LayoutItem> layoutItems_;
 
+    HWND serviceTitle_{};
+    HWND serviceLine_{};
+    HWND portLabel_{};
+    HWND statusLabel_{};
+
+    HWND userTitle_{};
+    HWND userLine_{};
+
+    HWND infoTitle_{};
+    HWND infoLine_{};
+    HWND userNameLabel_{};
+    HWND userPassLabel_{};
+    HWND homeLabel_{};
+    HWND permTitle_{};
+    HWND permLine_{};
+    std::array<HWND, 4> permHeaderLabels_{};
+    std::array<HWND, 4> permAreaLabels_{};
+
+    HWND dirTitle_{};
+    HWND dirLine_{};
+    HWND dirPathLabel_{};
+    HWND dirNameLabel_{};
+
+    HWND transferTitle_{};
+    HWND transferLine_{};
+
     HWND status_{};
     HWND portEdit_{};
     HWND startBtn_{};

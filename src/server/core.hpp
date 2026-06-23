@@ -81,6 +81,8 @@ private:
     void SpawnDownloadWorker(SOCKET sock, NetPacket req);
     void UploadWorker(SOCKET sock, const NetPacket& req);
     void DownloadWorker(SOCKET sock, const NetPacket& req);
+    void RegisterTransferSocket(SOCKET sock);
+    void UnregisterTransferSocket(SOCKET sock);
     void Loop();
 
     std::filesystem::path dataDir_;
@@ -94,6 +96,7 @@ private:
     std::unordered_map<std::string, UserRecord> users_;
     std::unordered_map<std::uint32_t, SessionInfo> sessions_;
     std::vector<SOCKET> clientSockets_;
+    std::vector<SOCKET> transferSockets_;
     std::string userStoreError_;
     std::vector<TransferSnapshot> transfers_;
 

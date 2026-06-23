@@ -342,6 +342,9 @@ TransferResult DownloadFileSync(const ConnectionInfo& connection, const std::str
     }
 
     std::uint64_t done = offset;
+    if (const auto control = onProgress(done, total); control != FlowControl::Continue) {
+        return control == FlowControl::Pause ? MakeResult(TransferOutcome::Paused) : MakeResult(TransferOutcome::Cancelled);
+    }
     while (true) {
         if (!RecvPacket(sock.Get(), packet)) {
             return MakeResult(TransferOutcome::Failed, "下载连接中断");
