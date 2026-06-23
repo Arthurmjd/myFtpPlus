@@ -15,7 +15,6 @@ public:
 
 private:
     void BuildUi();
-    void ApplyUiFont();
     void RefreshStatus();
     void ReloadUsers(const std::wstring& preferredName = L"");
     void ClearUserFields();
@@ -37,6 +36,7 @@ private:
     HINSTANCE instance_{};
     HWND hwnd_{};
     HFONT uiFont_{};
+    HFONT titleFont_{};
 
     HWND status_{};
     HWND portEdit_{};

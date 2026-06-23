@@ -8,6 +8,7 @@ namespace fds::clientapp {
 class ClientWindow {
 public:
     explicit ClientWindow(HINSTANCE instance);
+    ~ClientWindow();
 
     int Run(int showCmd);
 
@@ -64,6 +65,8 @@ private:
 
     HINSTANCE instance_{};
     HWND hwnd_{};
+    HFONT uiFont_{};
+    HFONT titleFont_{};
 
     HWND hostEdit_{};
     HWND portEdit_{};

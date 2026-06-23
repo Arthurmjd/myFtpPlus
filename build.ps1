@@ -64,6 +64,7 @@ Invoke-Compile -Name "client" -Sources $clientSources -Output (Join-Path $bin "c
     "-lbcrypt",
     "-lcomctl32",
     "-lcomdlg32",
+    "-lgdi32",
     "-lshell32",
     "-lole32"
 )

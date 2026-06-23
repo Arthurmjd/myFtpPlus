@@ -47,6 +47,15 @@ ClientWindow::ClientWindow(HINSTANCE instance)
     : instance_(instance),
       favorites_(std::filesystem::current_path() / L"data" / L"client_favorites.tsv") {}
 
+ClientWindow::~ClientWindow() {
+    if (uiFont_) {
+        DeleteObject(uiFont_);
+    }
+    if (titleFont_) {
+        DeleteObject(titleFont_);
+    }
+}
+
 int ClientWindow::Run(int showCmd) {
     INITCOMMONCONTROLSEX controls{};
     controls.dwSize = sizeof(controls);
@@ -77,16 +86,25 @@ int ClientWindow::Run(int showCmd) {
 HWND ClientWindow::Track(std::vector<HWND>& bucket, HWND hwnd) {
     if (hwnd) {
         bucket.push_back(hwnd);
+        if (uiFont_) {
+            SendMessageW(hwnd, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
+        }
     }
     return hwnd;
 }
 
 void ClientWindow::BuildUi() {
+    uiFont_ = CreateFontW(-18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                          CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"SimSun");
+    titleFont_ = CreateFontW(-24, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"SimSun");
+
     BuildLoginView();
     BuildClientView();
 
-    status_ = CreateWindowW(L"STATIC", L"请先连接服务器", WS_CHILD | WS_VISIBLE, 16, 680, 740, 24, hwnd_,
+    status_ = CreateWindowW(L"STATIC", L"请先连接服务器", WS_CHILD | WS_VISIBLE, 24, 690, 1080, 24, hwnd_,
                             reinterpret_cast<HMENU>(IDC_STATUS), instance_, nullptr);
+    SendMessageW(status_, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
 
     LoadFavorites();
     UpdateLoginMode();
@@ -95,127 +113,151 @@ void ClientWindow::BuildUi() {
 }
 
 void ClientWindow::BuildLoginView() {
-    Track(loginControls_, CreateWindowW(L"STATIC", L"远程文件客户端下载器", WS_CHILD | WS_VISIBLE | SS_CENTER, 350, 60, 420,
-                                        34, hwnd_, nullptr, instance_, nullptr));
-    Track(loginControls_, CreateWindowW(L"STATIC", L"请选择用户登录或匿名登录", WS_CHILD | WS_VISIBLE | SS_CENTER, 340, 96,
-                                        440, 24, hwnd_, nullptr, instance_, nullptr));
-    Track(loginControls_, CreateWindowW(L"BUTTON", L"连接设置", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 250, 138, 660, 250,
-                                        hwnd_, nullptr, instance_, nullptr));
+    auto title = Track(loginControls_, CreateWindowW(L"STATIC", L"连接服务", WS_CHILD | WS_VISIBLE | SS_CENTER, 450, 44, 240,
+                                                     34, hwnd_, nullptr, instance_, nullptr));
+    SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(titleFont_), TRUE);
+    Track(loginControls_,
+          CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_ETCHEDHORZ, 320, 92, 540, 1, hwnd_, nullptr, instance_,
+                        nullptr));
 
-    Track(loginControls_, CreateWindowW(L"STATIC", L"服务器", WS_CHILD | WS_VISIBLE, 300, 182, 70, 24, hwnd_, nullptr,
+    Track(loginControls_, CreateWindowW(L"STATIC", L"服务器", WS_CHILD | WS_VISIBLE, 340, 130, 90, 24, hwnd_, nullptr,
                                         instance_, nullptr));
-    hostEdit_ = Track(loginControls_, CreateWindowW(L"EDIT", L"127.0.0.1", WS_CHILD | WS_VISIBLE | WS_BORDER, 370, 178,
-                                                    170, 26, hwnd_, reinterpret_cast<HMENU>(IDC_HOST), instance_,
+    hostEdit_ = Track(loginControls_, CreateWindowW(L"EDIT", L"127.0.0.1", WS_CHILD | WS_VISIBLE | WS_BORDER, 340, 158,
+                                                    220, 30, hwnd_, reinterpret_cast<HMENU>(IDC_HOST), instance_,
                                                     nullptr));
-    Track(loginControls_, CreateWindowW(L"STATIC", L"端口", WS_CHILD | WS_VISIBLE, 570, 182, 50, 24, hwnd_, nullptr,
-                                        instance_, nullptr));
-    portEdit_ = Track(loginControls_, CreateWindowW(L"EDIT", L"9527", WS_CHILD | WS_VISIBLE | WS_BORDER, 620, 178, 100,
-                                                    26, hwnd_, reinterpret_cast<HMENU>(IDC_PORT), instance_, nullptr));
 
+    Track(loginControls_, CreateWindowW(L"STATIC", L"端口", WS_CHILD | WS_VISIBLE, 610, 130, 80, 24, hwnd_, nullptr,
+                                        instance_, nullptr));
+    portEdit_ = Track(loginControls_, CreateWindowW(L"EDIT", L"9527", WS_CHILD | WS_VISIBLE | WS_BORDER, 610, 158, 120,
+                                                    30, hwnd_, reinterpret_cast<HMENU>(IDC_PORT), instance_, nullptr));
+
+    Track(loginControls_, CreateWindowW(L"STATIC", L"登录方式", WS_CHILD | WS_VISIBLE, 340, 212, 110, 24, hwnd_, nullptr,
+                                        instance_, nullptr));
     modeUserRadio_ = Track(loginControls_,
                            CreateWindowW(L"BUTTON", L"用户登录",
-                                         WS_CHILD | WS_VISIBLE | WS_GROUP | BS_AUTORADIOBUTTON, 370, 222, 110, 24,
-                                         hwnd_, reinterpret_cast<HMENU>(IDC_MODE_USER), instance_, nullptr));
+                                         WS_CHILD | WS_VISIBLE | WS_GROUP | BS_AUTORADIOBUTTON, 340, 240, 120, 24, hwnd_,
+                                         reinterpret_cast<HMENU>(IDC_MODE_USER), instance_, nullptr));
     modeAnonRadio_ = Track(loginControls_,
-                           CreateWindowW(L"BUTTON", L"匿名登录", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON, 500, 222,
-                                         110, 24, hwnd_, reinterpret_cast<HMENU>(IDC_MODE_ANON), instance_, nullptr));
+                           CreateWindowW(L"BUTTON", L"匿名登录", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON, 480, 240, 120,
+                                         24, hwnd_, reinterpret_cast<HMENU>(IDC_MODE_ANON), instance_, nullptr));
     Button_SetCheck(modeUserRadio_, BST_CHECKED);
 
-    userLabel_ = Track(loginControls_, CreateWindowW(L"STATIC", L"用户名", WS_CHILD | WS_VISIBLE, 300, 266, 70, 24,
-                                                     hwnd_, nullptr, instance_, nullptr));
-    userEdit_ = Track(loginControls_, CreateWindowW(L"EDIT", L"demo", WS_CHILD | WS_VISIBLE | WS_BORDER, 370, 262, 170,
-                                                    26, hwnd_, reinterpret_cast<HMENU>(IDC_USER), instance_, nullptr));
-    passLabel_ = Track(loginControls_, CreateWindowW(L"STATIC", L"密码", WS_CHILD | WS_VISIBLE, 570, 266, 50, 24, hwnd_,
+    userLabel_ = Track(loginControls_, CreateWindowW(L"STATIC", L"用户名", WS_CHILD | WS_VISIBLE, 340, 292, 90, 24, hwnd_,
+                                                     nullptr, instance_, nullptr));
+    userEdit_ = Track(loginControls_, CreateWindowW(L"EDIT", L"demo", WS_CHILD | WS_VISIBLE | WS_BORDER, 340, 320, 220,
+                                                    30, hwnd_, reinterpret_cast<HMENU>(IDC_USER), instance_, nullptr));
+
+    passLabel_ = Track(loginControls_, CreateWindowW(L"STATIC", L"密码", WS_CHILD | WS_VISIBLE, 610, 292, 90, 24, hwnd_,
                                                      nullptr, instance_, nullptr));
     passEdit_ =
-        Track(loginControls_, CreateWindowW(L"EDIT", L"demo123", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_PASSWORD, 620,
-                                            262, 160, 26, hwnd_, reinterpret_cast<HMENU>(IDC_PASS), instance_, nullptr));
+        Track(loginControls_, CreateWindowW(L"EDIT", L"demo123", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_PASSWORD, 610,
+                                            320, 220, 30, hwnd_, reinterpret_cast<HMENU>(IDC_PASS), instance_, nullptr));
 
-    Track(loginControls_, CreateWindowW(L"STATIC", L"常用连接", WS_CHILD | WS_VISIBLE, 300, 306, 70, 24, hwnd_, nullptr,
+    Track(loginControls_, CreateWindowW(L"STATIC", L"常用连接", WS_CHILD | WS_VISIBLE, 340, 374, 110, 24, hwnd_, nullptr,
                                         instance_, nullptr));
     favoritesBox_ = Track(loginControls_,
-                          CreateWindowW(L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | CBS_DROPDOWNLIST, 370, 302,
-                                        320, 220, hwnd_, reinterpret_cast<HMENU>(IDC_FAVORITES), instance_, nullptr));
-    Track(loginControls_, CreateWindowW(L"BUTTON", L"载入", WS_CHILD | WS_VISIBLE, 705, 300, 75, 28, hwnd_,
+                          CreateWindowW(L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | CBS_DROPDOWNLIST, 340, 402,
+                                        390, 220, hwnd_, reinterpret_cast<HMENU>(IDC_FAVORITES), instance_, nullptr));
+    Track(loginControls_, CreateWindowW(L"BUTTON", L"载入", WS_CHILD | WS_VISIBLE, 744, 402, 86, 30, hwnd_,
                                         reinterpret_cast<HMENU>(IDC_LOAD_FAV), instance_, nullptr));
-    Track(loginControls_, CreateWindowW(L"BUTTON", L"保存连接", WS_CHILD | WS_VISIBLE, 370, 340, 120, 30, hwnd_,
+
+    Track(loginControls_, CreateWindowW(L"BUTTON", L"保存连接", WS_CHILD | WS_VISIBLE, 340, 462, 126, 34, hwnd_,
                                         reinterpret_cast<HMENU>(IDC_SAVE_FAV), instance_, nullptr));
-    Track(loginControls_, CreateWindowW(L"BUTTON", L"进入客户端", WS_CHILD | WS_VISIBLE, 660, 340, 120, 30, hwnd_,
+    Track(loginControls_, CreateWindowW(L"BUTTON", L"连接", WS_CHILD | WS_VISIBLE, 704, 462, 126, 34, hwnd_,
                                         reinterpret_cast<HMENU>(IDC_CONNECT), instance_, nullptr));
-    Track(loginControls_,
-          CreateWindowW(L"STATIC", L"匿名登录仅显示公共目录和下载目录；用户登录会显示用户目录、公共目录、下载目录、上传目录。",
-                        WS_CHILD | WS_VISIBLE, 285, 405, 600, 24, hwnd_, nullptr, instance_, nullptr));
 }
 
 void ClientWindow::BuildClientView() {
-    currentUser_ = Track(clientControls_,
-                         CreateWindowW(L"STATIC", L"当前登录：未登录", WS_CHILD | WS_VISIBLE, 16, 20, 780, 24, hwnd_,
-                                       nullptr, instance_, nullptr));
-    Track(clientControls_, CreateWindowW(L"BUTTON", L"退出登录", WS_CHILD | WS_VISIBLE, 1010, 14, 120, 30, hwnd_,
+    auto filesTitle =
+        Track(clientControls_, CreateWindowW(L"STATIC", L"文件", WS_CHILD | WS_VISIBLE, 24, 140, 70, 30, hwnd_, nullptr,
+                                             instance_, nullptr));
+    SendMessageW(filesTitle, WM_SETFONT, reinterpret_cast<WPARAM>(titleFont_), TRUE);
+
+    auto tasksTitle =
+        Track(clientControls_, CreateWindowW(L"STATIC", L"任务", WS_CHILD | WS_VISIBLE, 24, 522, 70, 30, hwnd_, nullptr,
+                                             instance_, nullptr));
+    SendMessageW(tasksTitle, WM_SETFONT, reinterpret_cast<WPARAM>(titleFont_), TRUE);
+
+    auto actionsTitle =
+        Track(clientControls_, CreateWindowW(L"STATIC", L"操作", WS_CHILD | WS_VISIBLE, 820, 140, 70, 30, hwnd_, nullptr,
+                                             instance_, nullptr));
+    SendMessageW(actionsTitle, WM_SETFONT, reinterpret_cast<WPARAM>(titleFont_), TRUE);
+
+    Track(clientControls_,
+          CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_ETCHEDHORZ, 96, 156, 690, 1, hwnd_, nullptr, instance_,
+                        nullptr));
+    Track(clientControls_,
+          CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_ETCHEDHORZ, 96, 538, 1010, 1, hwnd_, nullptr, instance_,
+                        nullptr));
+    Track(clientControls_,
+          CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_ETCHEDHORZ, 892, 156, 214, 1, hwnd_, nullptr, instance_,
+                        nullptr));
+
+    currentUser_ = Track(clientControls_, CreateWindowW(L"STATIC", L"用户: 未登录", WS_CHILD | WS_VISIBLE, 24, 24, 840, 24,
+                                                        hwnd_, nullptr, instance_, nullptr));
+    Track(clientControls_, CreateWindowW(L"BUTTON", L"退出登录", WS_CHILD | WS_VISIBLE, 986, 18, 120, 34, hwnd_,
                                          reinterpret_cast<HMENU>(IDC_LOGOUT), instance_, nullptr));
 
-    Track(clientControls_, CreateWindowW(L"BUTTON", L"<", WS_CHILD | WS_VISIBLE, 16, 56, 32, 28, hwnd_,
-                                         reinterpret_cast<HMENU>(IDC_BACK), instance_, nullptr));
-    Track(clientControls_, CreateWindowW(L"BUTTON", L">", WS_CHILD | WS_VISIBLE, 52, 56, 32, 28, hwnd_,
-                                         reinterpret_cast<HMENU>(IDC_FORWARD), instance_, nullptr));
-    Track(clientControls_, CreateWindowW(L"BUTTON", L"上级", WS_CHILD | WS_VISIBLE, 88, 56, 60, 28, hwnd_,
-                                         reinterpret_cast<HMENU>(IDC_UP), instance_, nullptr));
-    Track(clientControls_, CreateWindowW(L"BUTTON", L"刷新", WS_CHILD | WS_VISIBLE, 154, 56, 60, 28, hwnd_,
-                                         reinterpret_cast<HMENU>(IDC_REFRESH), instance_, nullptr));
-    pathEdit_ = Track(clientControls_,
-                      CreateWindowW(L"EDIT", L"/", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_READONLY, 224, 58, 500, 24,
-                                    hwnd_, reinterpret_cast<HMENU>(IDC_PATH), instance_, nullptr));
-    Track(clientControls_, CreateWindowW(L"STATIC", L"名称", WS_CHILD | WS_VISIBLE, 742, 60, 50, 24, hwnd_, nullptr,
+    Track(clientControls_, CreateWindowW(L"STATIC", L"路径", WS_CHILD | WS_VISIBLE, 24, 64, 70, 24, hwnd_, nullptr,
                                          instance_, nullptr));
-    inputEdit_ = Track(clientControls_,
-                       CreateWindowW(L"EDIT", L"新目录", WS_CHILD | WS_VISIBLE | WS_BORDER, 792, 58, 230, 24, hwnd_,
-                                     reinterpret_cast<HMENU>(IDC_INPUT), instance_, nullptr));
+    pathEdit_ = Track(clientControls_,
+                      CreateWindowW(L"EDIT", L"/", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_READONLY, 24, 92, 620, 30, hwnd_,
+                                    reinterpret_cast<HMENU>(IDC_PATH), instance_, nullptr));
+    Track(clientControls_, CreateWindowW(L"BUTTON", L"<", WS_CHILD | WS_VISIBLE, 664, 92, 42, 30, hwnd_,
+                                         reinterpret_cast<HMENU>(IDC_BACK), instance_, nullptr));
+    Track(clientControls_, CreateWindowW(L"BUTTON", L">", WS_CHILD | WS_VISIBLE, 714, 92, 42, 30, hwnd_,
+                                         reinterpret_cast<HMENU>(IDC_FORWARD), instance_, nullptr));
+    Track(clientControls_, CreateWindowW(L"BUTTON", L"上级", WS_CHILD | WS_VISIBLE, 764, 92, 74, 30, hwnd_,
+                                         reinterpret_cast<HMENU>(IDC_UP), instance_, nullptr));
+    Track(clientControls_, CreateWindowW(L"BUTTON", L"刷新", WS_CHILD | WS_VISIBLE, 848, 92, 74, 30, hwnd_,
+                                         reinterpret_cast<HMENU>(IDC_REFRESH), instance_, nullptr));
 
     fileList_ = Track(clientControls_,
                       CreateWindowW(WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LVS_REPORT | LVS_SINGLESEL,
-                                    16, 96, 740, 360, hwnd_, reinterpret_cast<HMENU>(IDC_FILES), instance_, nullptr));
-    ListView_SetExtendedListViewStyle(fileList_, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
+                                    24, 188, 760, 314, hwnd_, reinterpret_cast<HMENU>(IDC_FILES), instance_, nullptr));
+    ListView_SetExtendedListViewStyle(fileList_, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
     win32::AddColumn(fileList_, 0, 220, L"名称");
     win32::AddColumn(fileList_, 1, 80, L"类型");
     win32::AddColumn(fileList_, 2, 120, L"大小");
     win32::AddColumn(fileList_, 3, 180, L"修改时间");
-    win32::AddColumn(fileList_, 4, 220, L"路径");
+    win32::AddColumn(fileList_, 4, 150, L"路径");
 
-    Track(clientControls_, CreateWindowW(L"BUTTON", L"上传文件", WS_CHILD | WS_VISIBLE, 780, 110, 110, 30, hwnd_,
+    Track(clientControls_, CreateWindowW(L"STATIC", L"名称", WS_CHILD | WS_VISIBLE, 820, 188, 90, 24, hwnd_, nullptr,
+                                         instance_, nullptr));
+    inputEdit_ = Track(clientControls_,
+                       CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER, 820, 216, 286, 30, hwnd_,
+                                     reinterpret_cast<HMENU>(IDC_INPUT), instance_, nullptr));
+
+    Track(clientControls_, CreateWindowW(L"BUTTON", L"上传文件", WS_CHILD | WS_VISIBLE, 820, 268, 130, 34, hwnd_,
                                          reinterpret_cast<HMENU>(IDC_UPLOAD_FILE), instance_, nullptr));
-    Track(clientControls_, CreateWindowW(L"BUTTON", L"上传目录", WS_CHILD | WS_VISIBLE, 900, 110, 110, 30, hwnd_,
+    Track(clientControls_, CreateWindowW(L"BUTTON", L"上传目录", WS_CHILD | WS_VISIBLE, 976, 268, 130, 34, hwnd_,
                                          reinterpret_cast<HMENU>(IDC_UPLOAD_DIR), instance_, nullptr));
-    Track(clientControls_, CreateWindowW(L"BUTTON", L"下载文件", WS_CHILD | WS_VISIBLE, 1020, 110, 110, 30, hwnd_,
+    Track(clientControls_, CreateWindowW(L"BUTTON", L"下载文件", WS_CHILD | WS_VISIBLE, 820, 314, 130, 34, hwnd_,
                                          reinterpret_cast<HMENU>(IDC_DOWNLOAD), instance_, nullptr));
-    Track(clientControls_, CreateWindowW(L"BUTTON", L"删除", WS_CHILD | WS_VISIBLE, 780, 150, 110, 30, hwnd_,
+    Track(clientControls_, CreateWindowW(L"BUTTON", L"删除", WS_CHILD | WS_VISIBLE, 976, 314, 130, 34, hwnd_,
                                          reinterpret_cast<HMENU>(IDC_DELETE), instance_, nullptr));
-    Track(clientControls_, CreateWindowW(L"BUTTON", L"新建目录", WS_CHILD | WS_VISIBLE, 900, 150, 110, 30, hwnd_,
+    Track(clientControls_, CreateWindowW(L"BUTTON", L"新建目录", WS_CHILD | WS_VISIBLE, 820, 360, 130, 34, hwnd_,
                                          reinterpret_cast<HMENU>(IDC_MKDIR), instance_, nullptr));
-    Track(clientControls_, CreateWindowW(L"BUTTON", L"重命名", WS_CHILD | WS_VISIBLE, 1020, 150, 110, 30, hwnd_,
+    Track(clientControls_, CreateWindowW(L"BUTTON", L"重命名", WS_CHILD | WS_VISIBLE, 976, 360, 130, 34, hwnd_,
                                          reinterpret_cast<HMENU>(IDC_RENAME), instance_, nullptr));
-    Track(clientControls_, CreateWindowW(L"STATIC", L"登录后默认先显示根目录，双击即可进入对应目录入口。", WS_CHILD | WS_VISIBLE,
-                                         780, 200, 320, 24, hwnd_, nullptr, instance_, nullptr));
-    Track(clientControls_,
-          CreateWindowW(L"STATIC", L"建议先进入“用户目录”或“上传目录”再执行上传、创建目录等写入操作。", WS_CHILD | WS_VISIBLE,
-                        780, 226, 340, 36, hwnd_, nullptr, instance_, nullptr));
 
     taskList_ = Track(clientControls_,
                       CreateWindowW(WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LVS_REPORT | LVS_SINGLESEL,
-                                    16, 474, 1114, 190, hwnd_, reinterpret_cast<HMENU>(IDC_TASKS), instance_, nullptr));
-    ListView_SetExtendedListViewStyle(taskList_, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
+                                    24, 570, 760, 94, hwnd_, reinterpret_cast<HMENU>(IDC_TASKS), instance_, nullptr));
+    ListView_SetExtendedListViewStyle(taskList_, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
     win32::AddColumn(taskList_, 0, 50, L"ID");
-    win32::AddColumn(taskList_, 1, 70, L"类型");
-    win32::AddColumn(taskList_, 2, 280, L"本地路径");
-    win32::AddColumn(taskList_, 3, 280, L"远程路径");
-    win32::AddColumn(taskList_, 4, 150, L"进度");
-    win32::AddColumn(taskList_, 5, 100, L"状态");
-    win32::AddColumn(taskList_, 6, 170, L"说明");
+    win32::AddColumn(taskList_, 1, 60, L"类型");
+    win32::AddColumn(taskList_, 2, 145, L"本地路径");
+    win32::AddColumn(taskList_, 3, 145, L"远程路径");
+    win32::AddColumn(taskList_, 4, 110, L"进度");
+    win32::AddColumn(taskList_, 5, 80, L"状态");
+    win32::AddColumn(taskList_, 6, 150, L"说明");
 
-    Track(clientControls_, CreateWindowW(L"BUTTON", L"暂停", WS_CHILD | WS_VISIBLE, 780, 676, 90, 28, hwnd_,
+    Track(clientControls_, CreateWindowW(L"BUTTON", L"暂停", WS_CHILD | WS_VISIBLE, 820, 570, 90, 32, hwnd_,
                                          reinterpret_cast<HMENU>(IDC_PAUSE), instance_, nullptr));
-    Track(clientControls_, CreateWindowW(L"BUTTON", L"继续", WS_CHILD | WS_VISIBLE, 878, 676, 90, 28, hwnd_,
+    Track(clientControls_, CreateWindowW(L"BUTTON", L"继续", WS_CHILD | WS_VISIBLE, 922, 570, 90, 32, hwnd_,
                                          reinterpret_cast<HMENU>(IDC_RESUME), instance_, nullptr));
-    Track(clientControls_, CreateWindowW(L"BUTTON", L"取消", WS_CHILD | WS_VISIBLE, 976, 676, 90, 28, hwnd_,
+    Track(clientControls_, CreateWindowW(L"BUTTON", L"取消", WS_CHILD | WS_VISIBLE, 1024, 570, 90, 32, hwnd_,
                                          reinterpret_cast<HMENU>(IDC_CANCEL), instance_, nullptr));
 }
 
@@ -249,18 +291,19 @@ void ClientWindow::UpdateLoginMode() {
 }
 
 void ClientWindow::UpdateSessionBanner() {
-    std::wstring role = L"用户";
+    std::wstring text;
     if (client_.Username() == "anonymous") {
-        role = L"匿名";
-    } else if (client_.IsAdmin()) {
-        role = L"管理员";
+        text = L"用户: 匿名";
+    } else {
+        text = L"用户: " + Utf8ToWide(client_.Username());
+        if (client_.IsAdmin()) {
+            text += L"    权限: 管理员";
+        }
+        if (!client_.Home().empty()) {
+            text += L"    主目录: " + Utf8ToWide(client_.Home());
+        }
     }
-
-    std::wstring text = L"当前登录：" + Utf8ToWide(client_.Username()) + L"（" + role + L"）";
-    if (!client_.Home().empty() && client_.Username() != "anonymous") {
-        text += L"    主目录：" + Utf8ToWide(client_.Home());
-    }
-    win32::SetText(currentUser_, text);
+    win32::SetText(currentUser_, text.empty() ? L"用户: 未登录" : text);
 }
 
 void ClientWindow::ResetBrowserState() {
@@ -306,12 +349,12 @@ void ClientWindow::SaveFavorite() {
     }
 
     if (!favorites_.Add(favorite)) {
-        SetStatus(L"连接配置已存在");
+        SetStatus(L"连接已存在");
         return;
     }
 
     RefreshFavoritesBox();
-    SetStatus(L"连接配置已保存");
+    SetStatus(L"连接已保存");
 }
 
 void ClientWindow::LoadFavoriteSelection() {
@@ -348,7 +391,7 @@ bool ClientWindow::Browse(const std::string& path, bool pushHistory) {
         history_.Push(cwd);
     }
     RefreshFileList();
-    SetStatus(L"当前目录：" + Utf8ToWide(cwd));
+    SetStatus(L"当前目录: " + Utf8ToWide(cwd));
     return true;
 }
 
@@ -488,13 +531,13 @@ void ClientWindow::ConnectServer() {
 
     UpdateSessionBanner();
     SetView(true);
-    SetStatus(L"连接成功，已进入客户端界面");
+    SetStatus(L"连接成功");
 }
 
 void ClientWindow::Logout() {
     client_.Disconnect();
     ResetBrowserState();
-    win32::SetText(currentUser_, L"当前登录：未登录");
+    win32::SetText(currentUser_, L"用户: 未登录");
     SetView(false);
     SetStatus(L"已退出登录");
 }
@@ -789,6 +832,18 @@ LRESULT CALLBACK ClientWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
         case WM_CREATE:
             self->BuildUi();
             return 0;
+        case WM_CTLCOLORSTATIC: {
+            HDC hdc = reinterpret_cast<HDC>(wParam);
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, RGB(32, 32, 32));
+            return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
+        }
+        case WM_CTLCOLORBTN: {
+            HDC hdc = reinterpret_cast<HDC>(wParam);
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, RGB(32, 32, 32));
+            return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
+        }
         case WM_TIMER:
             if (wParam == kRefreshTimerId) {
                 self->RefreshTasks();

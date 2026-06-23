@@ -52,11 +52,6 @@ std::string TrimUserName(const std::wstring& text) {
     return Trim(WideToUtf8(text));
 }
 
-BOOL CALLBACK ApplyFontProc(HWND child, LPARAM font) {
-    SendMessageW(child, WM_SETFONT, static_cast<WPARAM>(font), TRUE);
-    return TRUE;
-}
-
 }  // namespace
 
 ServerWindow::ServerWindow(HINSTANCE instance) : instance_(instance) {}
@@ -64,6 +59,9 @@ ServerWindow::ServerWindow(HINSTANCE instance) : instance_(instance) {}
 ServerWindow::~ServerWindow() {
     if (uiFont_) {
         DeleteObject(uiFont_);
+    }
+    if (titleFont_) {
+        DeleteObject(titleFont_);
     }
 }
 
@@ -76,8 +74,8 @@ int ServerWindow::Run(int showCmd) {
     windowClass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     RegisterClassW(&windowClass);
 
-    hwnd_ = CreateWindowW(windowClass.lpszClassName, L"FDS 服务端管理面板", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
-                          CW_USEDEFAULT, 1140, 760, nullptr, nullptr, instance_, this);
+    hwnd_ = CreateWindowW(windowClass.lpszClassName, L"FDS 服务端", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
+                          1120, 760, nullptr, nullptr, instance_, this);
     ShowWindow(hwnd_, showCmd);
     UpdateWindow(hwnd_);
 
@@ -91,95 +89,97 @@ int ServerWindow::Run(int showCmd) {
 
 void ServerWindow::BuildUi() {
     uiFont_ = CreateFontW(-18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                          CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+                          CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"SimSun");
+    titleFont_ = CreateFontW(-24, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"SimSun");
 
-    CreateWindowW(L"BUTTON", L"服务状态", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 20, 18, 1080, 92, hwnd_, nullptr, instance_,
-                  nullptr);
-    CreateWindowW(L"STATIC", L"监听端口", WS_CHILD | WS_VISIBLE, 40, 54, 70, 24, hwnd_, nullptr, instance_, nullptr);
-    portEdit_ = CreateWindowW(L"EDIT", L"9527", WS_CHILD | WS_VISIBLE | WS_BORDER, 116, 50, 110, 28, hwnd_,
-                              reinterpret_cast<HMENU>(IDC_PORT), instance_, nullptr);
-    startBtn_ = CreateWindowW(L"BUTTON", L"启动服务", WS_CHILD | WS_VISIBLE, 244, 48, 110, 32, hwnd_,
-                              reinterpret_cast<HMENU>(IDC_START), instance_, nullptr);
-    status_ = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE, 378, 52, 700, 24, hwnd_,
-                            reinterpret_cast<HMENU>(IDC_STATUS), instance_, nullptr);
-    CreateWindowW(L"STATIC", L"用户数据使用 SQLite 存储；管理员默认拥有全部权限。", WS_CHILD | WS_VISIBLE, 40, 82, 520, 20, hwnd_,
-                  nullptr, instance_, nullptr);
+    auto createText = [&](const wchar_t* text, int x, int y, int w, int h, HFONT font = nullptr, DWORD style = 0,
+                          int id = 0) {
+        HWND ctrl = CreateWindowW(L"STATIC", text, WS_CHILD | WS_VISIBLE | style, x, y, w, h, hwnd_,
+                                  id ? reinterpret_cast<HMENU>(id) : nullptr, instance_, nullptr);
+        SendMessageW(ctrl, WM_SETFONT, reinterpret_cast<WPARAM>(font ? font : uiFont_), TRUE);
+        return ctrl;
+    };
+    auto createLine = [&](int x, int y, int w) {
+        CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_ETCHEDHORZ, x, y, w, 1, hwnd_, nullptr, instance_,
+                      nullptr);
+    };
+    auto createEdit = [&](const wchar_t* text, int x, int y, int w, int h, int id, DWORD extraStyle = 0) {
+        HWND ctrl = CreateWindowW(L"EDIT", text, WS_CHILD | WS_VISIBLE | WS_BORDER | extraStyle, x, y, w, h, hwnd_,
+                                  reinterpret_cast<HMENU>(id), instance_, nullptr);
+        SendMessageW(ctrl, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
+        return ctrl;
+    };
+    auto createButton = [&](const wchar_t* text, int x, int y, int w, int h, int id, DWORD extraStyle = 0) {
+        HWND ctrl = CreateWindowW(L"BUTTON", text, WS_CHILD | WS_VISIBLE | extraStyle, x, y, w, h, hwnd_,
+                                  reinterpret_cast<HMENU>(id), instance_, nullptr);
+        SendMessageW(ctrl, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
+        return ctrl;
+    };
 
-    CreateWindowW(L"BUTTON", L"用户列表", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 20, 126, 290, 560, hwnd_, nullptr, instance_,
-                  nullptr);
-    userList_ = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL, 38, 160, 254,
-                              456, hwnd_, reinterpret_cast<HMENU>(IDC_USER_LIST), instance_, nullptr);
-    newBtn_ = CreateWindowW(L"BUTTON", L"新建用户", WS_CHILD | WS_VISIBLE, 38, 632, 118, 30, hwnd_,
-                            reinterpret_cast<HMENU>(IDC_USER_NEW), instance_, nullptr);
-    deleteBtn_ = CreateWindowW(L"BUTTON", L"删除用户", WS_CHILD | WS_VISIBLE, 174, 632, 118, 30, hwnd_,
-                               reinterpret_cast<HMENU>(IDC_USER_DELETE), instance_, nullptr);
+    createText(L"服务", 32, 24, 70, 30, titleFont_);
+    createLine(104, 40, 960);
+    createText(L"端口", 40, 76, 60, 22);
+    portEdit_ = createEdit(L"9527", 40, 104, 150, 32, IDC_PORT);
+    startBtn_ = createButton(L"启动服务", 210, 104, 120, 34, IDC_START, BS_PUSHBUTTON);
+    createText(L"状态", 366, 76, 60, 22);
+    status_ = createText(L"", 366, 106, 680, 24, nullptr, 0, IDC_STATUS);
 
-    CreateWindowW(L"BUTTON", L"用户详情", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 330, 126, 770, 560, hwnd_, nullptr, instance_,
-                  nullptr);
-    CreateWindowW(L"STATIC", L"用户名", WS_CHILD | WS_VISIBLE, 360, 164, 80, 24, hwnd_, nullptr, instance_, nullptr);
-    userName_ = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER, 442, 160, 220, 28, hwnd_,
-                              reinterpret_cast<HMENU>(IDC_USER_NAME), instance_, nullptr);
-    CreateWindowW(L"STATIC", L"密码", WS_CHILD | WS_VISIBLE, 690, 164, 60, 24, hwnd_, nullptr, instance_, nullptr);
-    userPass_ = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_PASSWORD, 748, 160, 220, 28, hwnd_,
-                              reinterpret_cast<HMENU>(IDC_USER_PASS), instance_, nullptr);
+    createText(L"用户", 32, 172, 70, 30, titleFont_);
+    createLine(104, 188, 230);
+    userList_ = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL, 40, 218, 276,
+                              386, hwnd_, reinterpret_cast<HMENU>(IDC_USER_LIST), instance_, nullptr);
+    SendMessageW(userList_, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
+    newBtn_ = createButton(L"新建", 40, 622, 128, 34, IDC_USER_NEW, BS_PUSHBUTTON);
+    deleteBtn_ = createButton(L"删除", 188, 622, 128, 34, IDC_USER_DELETE, BS_PUSHBUTTON);
 
-    CreateWindowW(L"STATIC", L"主目录", WS_CHILD | WS_VISIBLE, 360, 204, 80, 24, hwnd_, nullptr, instance_, nullptr);
-    homeHint_ = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE, 442, 204, 520, 24, hwnd_,
-                              reinterpret_cast<HMENU>(IDC_HOME_HINT), instance_, nullptr);
+    createText(L"信息", 360, 172, 70, 30, titleFont_);
+    createLine(432, 188, 632);
 
-    userEnabled_ = CreateWindowW(L"BUTTON", L"启用账号", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | BS_PUSHLIKE, 442, 244,
-                                 110, 30, hwnd_, reinterpret_cast<HMENU>(IDC_USER_ENABLED), instance_, nullptr);
-    userAdmin_ = CreateWindowW(L"BUTTON", L"管理员", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | BS_PUSHLIKE, 564, 244, 110,
-                               30, hwnd_, reinterpret_cast<HMENU>(IDC_USER_ADMIN), instance_, nullptr);
+    createText(L"用户名", 360, 218, 90, 22);
+    userName_ = createEdit(L"", 360, 246, 240, 32, IDC_USER_NAME);
+    createText(L"密码", 636, 218, 90, 22);
+    userPass_ = createEdit(L"", 636, 246, 240, 32, IDC_USER_PASS, ES_PASSWORD);
 
-    CreateWindowW(L"STATIC", L"权限设置", WS_CHILD | WS_VISIBLE, 360, 296, 80, 24, hwnd_, nullptr, instance_, nullptr);
-    CreateWindowW(L"STATIC", L"按目录设置，按钮按下即表示允许。", WS_CHILD | WS_VISIBLE, 442, 296, 320, 24, hwnd_, nullptr,
-                  instance_, nullptr);
+    userEnabled_ = createButton(L"启用", 360, 298, 80, 24, IDC_USER_ENABLED, BS_AUTOCHECKBOX);
+    userAdmin_ = createButton(L"管理员", 470, 298, 100, 24, IDC_USER_ADMIN, BS_AUTOCHECKBOX);
 
-    const int gridLeft = 442;
-    const int gridTop = 334;
-    const int rowHeight = 54;
-    const int labelWidth = 90;
-    const int buttonWidth = 56;
-    const int buttonGap = 12;
+    createText(L"主目录", 360, 344, 90, 22);
+    homeHint_ = createText(L"", 360, 372, 520, 24, nullptr, 0, IDC_HOME_HINT);
+
+    createText(L"权限", 360, 430, 70, 30, titleFont_);
+    createLine(432, 446, 632);
+
+    const int gridLeft = 360;
+    const int headerTop = 478;
+    const int rowTop = 510;
+    const int rowHeight = 48;
+    const int labelWidth = 110;
+    const int buttonWidth = 58;
+    const int buttonGap = 16;
 
     for (int perm = 0; perm < kPermCount; ++perm) {
         const int x = gridLeft + labelWidth + perm * (buttonWidth + buttonGap);
-        CreateWindowW(L"STATIC", kPermLabels[perm], WS_CHILD | WS_VISIBLE | SS_CENTER, x, gridTop - 30, buttonWidth, 20,
-                      hwnd_, nullptr, instance_, nullptr);
+        createText(kPermLabels[perm], x, headerTop, buttonWidth, 22, nullptr, SS_CENTER);
     }
 
     for (int area = 0; area < kAreaCount; ++area) {
-        const int y = gridTop + area * rowHeight;
-        CreateWindowW(L"STATIC", kAreaLabels[area], WS_CHILD | WS_VISIBLE, gridLeft, y + 8, labelWidth, 24, hwnd_, nullptr,
-                      instance_, nullptr);
+        const int y = rowTop + area * rowHeight;
+        createText(kAreaLabels[area], gridLeft, y + 6, labelWidth, 24);
         for (int perm = 0; perm < kPermCount; ++perm) {
             const int x = gridLeft + labelWidth + perm * (buttonWidth + buttonGap);
             permissionButtons_[area][perm] =
-                CreateWindowW(L"BUTTON", kPermLabels[perm],
-                              WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | BS_PUSHLIKE | WS_TABSTOP, x, y, buttonWidth, 32,
-                              hwnd_, reinterpret_cast<HMENU>(IDC_PERM_BASE + area * kPermCount + perm), instance_, nullptr);
+                createButton(kPermLabels[perm], x, y, buttonWidth, 30, IDC_PERM_BASE + area * kPermCount + perm,
+                             BS_AUTOCHECKBOX | BS_PUSHLIKE | WS_TABSTOP);
         }
     }
 
-    CreateWindowW(L"STATIC", L"普通用户建议至少保留一个读取权限；管理员保存时会自动写入根目录全权限。", WS_CHILD | WS_VISIBLE, 442,
-                  560, 520, 24, hwnd_, nullptr, instance_, nullptr);
+    saveBtn_ = createButton(L"保存", 360, 622, 140, 36, IDC_USER_SAVE, BS_PUSHBUTTON);
 
-    saveBtn_ = CreateWindowW(L"BUTTON", L"保存用户", WS_CHILD | WS_VISIBLE, 442, 618, 136, 34, hwnd_,
-                             reinterpret_cast<HMENU>(IDC_USER_SAVE), instance_, nullptr);
-
-    ApplyUiFont();
     CreateNewUser();
     ReloadUsers();
     RefreshStatus();
     SetTimer(hwnd_, kRefreshTimerId, 1000, nullptr);
-}
-
-void ServerWindow::ApplyUiFont() {
-    if (!uiFont_) {
-        return;
-    }
-    EnumChildWindows(hwnd_, ApplyFontProc, reinterpret_cast<LPARAM>(uiFont_));
 }
 
 void ServerWindow::RefreshStatus() {
@@ -319,15 +319,15 @@ void ServerWindow::SaveUser() {
 
     const bool admin = Button_GetCheck(userAdmin_) == BST_CHECKED;
     const std::string ruleSpec = BuildRuleSpec(username, admin);
-    if (!admin && ParseRuleSpec(ruleSpec).empty()) {
-        AlertUser(L"普通用户至少需要一个有效权限");
+    const auto rules = ParseRuleSpec(ruleSpec);
+    if (!admin && rules.empty()) {
+        AlertUser(L"普通用户至少保留一项权限");
         return;
     }
-    if (!admin && !HasPermission(ParseRuleSpec(ruleSpec), "/public", PermRead) &&
-        !HasPermission(ParseRuleSpec(ruleSpec), "/download", PermRead) &&
-        !HasPermission(ParseRuleSpec(ruleSpec), "/users/" + username, PermRead) &&
-        !HasPermission(ParseRuleSpec(ruleSpec), "/upload/" + username, PermRead)) {
-        AlertUser(L"普通用户至少需要一个读取权限");
+    if (!admin && !HasPermission(rules, "/public", PermRead) && !HasPermission(rules, "/download", PermRead) &&
+        !HasPermission(rules, "/users/" + username, PermRead) &&
+        !HasPermission(rules, "/upload/" + username, PermRead)) {
+        AlertUser(L"普通用户至少保留一个读取权限");
         return;
     }
 
@@ -480,6 +480,23 @@ LRESULT CALLBACK ServerWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
         case WM_CREATE:
             self->BuildUi();
             return 0;
+        case WM_CTLCOLORSTATIC: {
+            HDC hdc = reinterpret_cast<HDC>(wParam);
+            HWND control = reinterpret_cast<HWND>(lParam);
+            SetBkMode(hdc, TRANSPARENT);
+            if (control == self->status_ || control == self->homeHint_) {
+                SetTextColor(hdc, RGB(90, 90, 90));
+            } else {
+                SetTextColor(hdc, RGB(32, 32, 32));
+            }
+            return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
+        }
+        case WM_CTLCOLORBTN: {
+            HDC hdc = reinterpret_cast<HDC>(wParam);
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, RGB(32, 32, 32));
+            return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
+        }
         case WM_TIMER:
             if (wParam == kRefreshTimerId) {
                 self->RefreshStatus();
