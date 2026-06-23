@@ -11,18 +11,21 @@ namespace fds {
 
 namespace {
 
+// 64 位整数的主机序转网络序。
 std::uint64_t HostToNet64(std::uint64_t value) {
     const auto hi = htonl(static_cast<std::uint32_t>(value >> 32));
     const auto lo = htonl(static_cast<std::uint32_t>(value & 0xffffffffull));
     return (static_cast<std::uint64_t>(lo) << 32) | hi;
 }
 
+// 64 位整数的网络序转主机序。
 std::uint64_t NetToHost64(std::uint64_t value) {
     const auto hi = ntohl(static_cast<std::uint32_t>(value >> 32));
     const auto lo = ntohl(static_cast<std::uint32_t>(value & 0xffffffffull));
     return (static_cast<std::uint64_t>(lo) << 32) | hi;
 }
 
+// 把二进制摘要转成十六进制字符串。
 std::string ToHex(const unsigned char* data, std::size_t len) {
     std::ostringstream oss;
     oss << std::hex << std::setfill('0');
@@ -32,6 +35,7 @@ std::string ToHex(const unsigned char* data, std::size_t len) {
     return oss.str();
 }
 
+// 确保目标目录存在；不存在时自动创建。
 bool EnsureDir(const std::filesystem::path& path) {
     std::error_code ec;
     if (std::filesystem::exists(path, ec)) {
@@ -42,15 +46,18 @@ bool EnsureDir(const std::filesystem::path& path) {
 
 }  // namespace
 
+// 初始化 Winsock。
 bool InitSockets() {
     WSADATA data{};
     return WSAStartup(MAKEWORD(2, 2), &data) == 0;
 }
 
+// 释放 Winsock。
 void CleanupSockets() {
     WSACleanup();
 }
 
+// 安全关闭 socket，并把句柄清空。
 void CloseSocket(SOCKET& sock) {
     if (sock != INVALID_SOCKET) {
         shutdown(sock, SD_BOTH);
@@ -59,6 +66,7 @@ void CloseSocket(SOCKET& sock) {
     }
 }
 
+// 创建服务端监听 socket，并设置为非阻塞模式。
 SOCKET CreateListenSocket(int port) {
     SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sock == INVALID_SOCKET) {
@@ -84,6 +92,7 @@ SOCKET CreateListenSocket(int port) {
     return sock;
 }
 
+// 连接到远程服务端，支持 IP 和主机名两种输入。
 SOCKET ConnectSocket(const std::string& host, int port) {
     SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sock == INVALID_SOCKET) {
@@ -111,6 +120,7 @@ SOCKET ConnectSocket(const std::string& host, int port) {
     return sock;
 }
 
+// UTF-8 转宽字符串，供 Win32 界面使用。
 std::wstring Utf8ToWide(const std::string& value) {
     if (value.empty()) {
         return L"";
@@ -121,6 +131,7 @@ std::wstring Utf8ToWide(const std::string& value) {
     return out;
 }
 
+// 宽字符串转 UTF-8，供网络协议和文件逻辑路径使用。
 std::string WideToUtf8(const std::wstring& value) {
     if (value.empty()) {
         return "";
@@ -131,6 +142,7 @@ std::string WideToUtf8(const std::wstring& value) {
     return out;
 }
 
+// 去掉字符串两端空白。
 std::string Trim(const std::string& value) {
     const auto first = value.find_first_not_of(" \t\r\n");
     if (first == std::string::npos) {
@@ -140,6 +152,7 @@ std::string Trim(const std::string& value) {
     return value.substr(first, last - first + 1);
 }
 
+// 按单字符切分字符串。
 std::vector<std::string> Split(const std::string& value, char ch) {
     std::vector<std::string> items;
     std::string current;
@@ -155,6 +168,7 @@ std::vector<std::string> Split(const std::string& value, char ch) {
     return items;
 }
 
+// 转义文本协议中的反斜杠、换行、制表符等特殊字符。
 std::string EscapeField(const std::string& value) {
     std::string out;
     out.reserve(value.size());
@@ -170,6 +184,7 @@ std::string EscapeField(const std::string& value) {
     return out;
 }
 
+// 还原文本协议中的转义字符。
 std::string UnescapeField(const std::string& value) {
     std::string out;
     out.reserve(value.size());
@@ -197,6 +212,7 @@ std::string UnescapeField(const std::string& value) {
     return out;
 }
 
+// 按“制表符分列、换行分行”的协议格式拼一行文本。
 std::string MakeLine(const std::vector<std::string>& fields) {
     std::ostringstream oss;
     for (std::size_t i = 0; i < fields.size(); ++i) {
@@ -209,6 +225,7 @@ std::string MakeLine(const std::vector<std::string>& fields) {
     return oss.str();
 }
 
+// 把多行文本协议解析为二维字符串数组。
 std::vector<std::vector<std::string>> ParseLines(const std::string& text) {
     std::vector<std::vector<std::string>> rows;
     std::istringstream iss(text);
@@ -226,6 +243,7 @@ std::vector<std::vector<std::string>> ParseLines(const std::string& text) {
     return rows;
 }
 
+// 把键值对序列化成文本协议包体。
 std::string SerializePairs(const std::map<std::string, std::string>& pairs) {
     std::ostringstream oss;
     for (const auto& [key, value] : pairs) {
@@ -234,6 +252,7 @@ std::string SerializePairs(const std::map<std::string, std::string>& pairs) {
     return oss.str();
 }
 
+// 把文本协议中的键值对解析成 map。
 std::map<std::string, std::string> ParsePairs(const std::string& text) {
     std::map<std::string, std::string> out;
     for (const auto& cols : ParseLines(text)) {
@@ -244,6 +263,7 @@ std::map<std::string, std::string> ParsePairs(const std::string& text) {
     return out;
 }
 
+// 持续发送直到目标字节数全部写出。
 bool SendAll(SOCKET sock, const void* data, std::size_t len) {
     const auto* ptr = static_cast<const char*>(data);
     std::size_t sent = 0;
@@ -257,6 +277,7 @@ bool SendAll(SOCKET sock, const void* data, std::size_t len) {
     return true;
 }
 
+// 持续接收直到目标字节数全部读满。
 bool RecvAll(SOCKET sock, void* data, std::size_t len) {
     auto* ptr = static_cast<char*>(data);
     std::size_t recvd = 0;
@@ -270,6 +291,7 @@ bool RecvAll(SOCKET sock, void* data, std::size_t len) {
     return true;
 }
 
+// 按“包头 + 包体”的格式发送一个完整协议包。
 bool SendPacket(SOCKET sock, Cmd cmd, std::uint32_t seq, std::uint32_t session, const std::string& body) {
     PacketHeader header{};
     header.magic = htonl(kMagic);
@@ -284,6 +306,7 @@ bool SendPacket(SOCKET sock, Cmd cmd, std::uint32_t seq, std::uint32_t session, 
     return body.empty() || SendAll(sock, body.data(), body.size());
 }
 
+// 先收固定包头，再按长度收完整包体。
 bool RecvPacket(SOCKET sock, NetPacket& packet) {
     PacketHeader header{};
     if (!RecvAll(sock, &header, sizeof(header))) {
@@ -300,6 +323,7 @@ bool RecvPacket(SOCKET sock, NetPacket& packet) {
     return length == 0 || RecvAll(sock, packet.body.data(), length);
 }
 
+// 计算一段内存的 SHA-256。
 std::string Sha256Bytes(const unsigned char* data, std::size_t len) {
     BCRYPT_ALG_HANDLE alg = nullptr;
     BCRYPT_HASH_HANDLE hash = nullptr;
@@ -325,10 +349,12 @@ std::string Sha256Bytes(const unsigned char* data, std::size_t len) {
     return ToHex(digest.data(), digest.size());
 }
 
+// 计算字符串的 SHA-256。
 std::string Sha256String(const std::string& text) {
     return Sha256Bytes(reinterpret_cast<const unsigned char*>(text.data()), text.size());
 }
 
+// 以流式方式计算文件 SHA-256，避免一次性读入整个文件。
 std::string Sha256File(const std::filesystem::path& path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) {
@@ -367,6 +393,7 @@ std::string Sha256File(const std::filesystem::path& path) {
     return ToHex(digest.data(), digest.size());
 }
 
+// 生成当前本地时间字符串。
 std::string NowString() {
     SYSTEMTIME st{};
     GetLocalTime(&st);
@@ -376,6 +403,7 @@ std::string NowString() {
     return buffer;
 }
 
+// 把字节数格式化为更易读的 KB/MB/GB 形式。
 std::string FormatBytes(std::uint64_t bytes) {
     constexpr const char* units[] = {"B", "KB", "MB", "GB", "TB"};
     double value = static_cast<double>(bytes);
@@ -389,6 +417,7 @@ std::string FormatBytes(std::uint64_t bytes) {
     return oss.str();
 }
 
+// 规范化逻辑路径，并拒绝包含 .. 的不安全访问。
 std::string NormalizeVirtualPath(const std::string& raw) {
     std::string value = Trim(raw);
     if (value.empty()) {
@@ -418,6 +447,7 @@ std::string NormalizeVirtualPath(const std::string& raw) {
     return oss.str();
 }
 
+// 把逻辑路径映射到服务端 data/server_root 下的真实磁盘路径。
 std::filesystem::path VirtualToReal(const std::filesystem::path& root, const std::string& virtualPath) {
     const auto clean = NormalizeVirtualPath(virtualPath);
     if (clean.empty()) {
@@ -432,6 +462,7 @@ std::filesystem::path VirtualToReal(const std::filesystem::path& root, const std
     return out.lexically_normal();
 }
 
+// 写文件前确保父目录存在。
 bool ParentExistsForWrite(const std::filesystem::path& path) {
     std::error_code ec;
     auto parent = path.parent_path();
@@ -441,6 +472,7 @@ bool ParentExistsForWrite(const std::filesystem::path& path) {
     return EnsureDir(parent) && std::filesystem::exists(parent, ec);
 }
 
+// 把 RWDN 形式的权限字符串解析成位标记。
 std::uint32_t ParsePermBits(const std::string& text) {
     std::uint32_t bits = 0;
     for (char ch : text) {
@@ -455,6 +487,7 @@ std::uint32_t ParsePermBits(const std::string& text) {
     return bits;
 }
 
+// 把权限位重新格式化成 RWDN 形式。
 std::string FormatPermBits(std::uint32_t bits) {
     std::string out;
     if (bits & PermRead) out.push_back('R');
@@ -464,6 +497,7 @@ std::string FormatPermBits(std::uint32_t bits) {
     return out;
 }
 
+// 解析类似 /public:R;/users/demo:RWDN 的规则字符串。
 std::vector<PermissionRule> ParseRuleSpec(const std::string& spec) {
     std::vector<PermissionRule> rules;
     for (const auto& item : Split(spec, ';')) {
@@ -484,6 +518,7 @@ std::vector<PermissionRule> ParseRuleSpec(const std::string& spec) {
     return rules;
 }
 
+// 按最长前缀匹配规则判断某个路径是否拥有指定权限位。
 bool HasPermission(const std::vector<PermissionRule>& rules, const std::string& path, std::uint32_t bit) {
     const auto clean = NormalizeVirtualPath(path);
     if (clean.empty()) {
@@ -502,6 +537,7 @@ bool HasPermission(const std::vector<PermissionRule>& rules, const std::string& 
     return best && ((best->bits & bit) == bit);
 }
 
+// 从旧版 TSV 文件读取用户列表，供 SQLite 首次导入使用。
 std::vector<UserRecord> LoadUsers(const std::filesystem::path& path) {
     std::vector<UserRecord> users;
     std::ifstream in(path);
@@ -527,6 +563,7 @@ std::vector<UserRecord> LoadUsers(const std::filesystem::path& path) {
     return users;
 }
 
+// 把用户列表保存为旧版 TSV 格式。
 bool SaveUsers(const std::filesystem::path& path, const std::vector<UserRecord>& users) {
     if (!ParentExistsForWrite(path)) {
         return false;
@@ -548,6 +585,7 @@ bool SaveUsers(const std::filesystem::path& path, const std::vector<UserRecord>&
     return true;
 }
 
+// 把 filesystem 时间戳格式化成界面可显示的字符串。
 std::string FileTimeString(const std::filesystem::file_time_type& fileTime) {
     const auto sysNow = std::chrono::system_clock::now();
     const auto fileNow = std::filesystem::file_time_type::clock::now();
@@ -560,6 +598,7 @@ std::string FileTimeString(const std::filesystem::file_time_type& fileTime) {
     return oss.str();
 }
 
+// 枚举一个目录下的文件项，并按“目录优先、名称排序”返回。
 std::vector<FileEntry> EnumerateDirectory(const std::filesystem::path& base, const std::string& virtualPath) {
     std::vector<FileEntry> entries;
     std::error_code ec;

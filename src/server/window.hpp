@@ -6,6 +6,7 @@
 
 namespace fds::serverapp {
 
+// 服务端管理员面板：负责服务开关、用户管理、目录管理和传输列表展示。
 class ServerWindow {
 public:
     explicit ServerWindow(HINSTANCE instance);
@@ -14,12 +15,15 @@ public:
     int Run(int showCmd);
 
 private:
+    // 记录基准布局，窗口缩放时按比例重排控件。
     struct LayoutItem {
         HWND hwnd{};
         RECT rect{};
     };
 
+    // Place 会登记控件原始位置，供后续统一布局使用。
     HWND Place(HWND hwnd, int x, int y, int w, int h);
+    // UI 构建与刷新。
     void BuildUi();
     void LayoutControls();
     void ResizeListColumns();
@@ -27,6 +31,7 @@ private:
     void RefreshTransfers();
     void RefreshDirectory(const std::wstring& preferredSelection = L"");
     void ReloadUsers(const std::wstring& preferredName = L"");
+    // 用户表单与权限按钮联动。
     void ClearUserFields();
     void ApplyUser(const UserRecord& user);
     void FillFromSelection();
@@ -39,6 +44,7 @@ private:
     void SetPermissionDefaults();
     std::string SuggestedHome(const std::string& username, bool admin) const;
     std::string BuildRuleSpec(const std::string& username, bool admin) const;
+    // 管理员目录管理相关操作。
     std::string CurrentDirPath() const;
     std::optional<FileEntry> SelectedDirectoryEntry() const;
     void DirectoryUp();
@@ -46,8 +52,10 @@ private:
     void DirectoryRename();
     void DirectoryDelete();
     void OpenSelectedDirectory();
+    // 统一弹出提示框。
     void AlertUser(const std::wstring& text) const;
 
+    // Win32 窗口消息入口。
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
     HINSTANCE instance_{};

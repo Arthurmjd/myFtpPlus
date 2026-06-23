@@ -62,10 +62,12 @@ constexpr std::uint32_t kPermBits[kPermCount] = {
     PermRename,
 };
 
+// 读取并清理用户输入框中的用户名。
 std::string TrimUserName(const std::wstring& text) {
     return Trim(WideToUtf8(text));
 }
 
+// 拼接管理员目录管理使用的逻辑路径。
 std::string JoinVirtualPath(const std::string& base, const std::string& name) {
     if (base == "/") {
         return NormalizeVirtualPath("/" + name);
@@ -75,8 +77,10 @@ std::string JoinVirtualPath(const std::string& base, const std::string& name) {
 
 }  // namespace
 
+// 保存应用实例句柄。
 ServerWindow::ServerWindow(HINSTANCE instance) : instance_(instance) {}
 
+// 释放界面字体资源。
 ServerWindow::~ServerWindow() {
     if (uiFont_) {
         DeleteObject(uiFont_);
@@ -86,6 +90,7 @@ ServerWindow::~ServerWindow() {
     }
 }
 
+// 记录控件原始布局位置，供窗口缩放时统一重排。
 HWND ServerWindow::Place(HWND hwnd, int x, int y, int w, int h) {
     if (!hwnd) {
         return nullptr;
@@ -94,6 +99,7 @@ HWND ServerWindow::Place(HWND hwnd, int x, int y, int w, int h) {
     return hwnd;
 }
 
+// 创建主窗口并进入标准 Win32 消息循环。
 int ServerWindow::Run(int showCmd) {
     WNDCLASSW windowClass{};
     windowClass.lpfnWndProc = &ServerWindow::WndProc;
@@ -116,6 +122,7 @@ int ServerWindow::Run(int showCmd) {
     return static_cast<int>(msg.wParam);
 }
 
+// 构建服务端管理员面板中的全部控件。
 void ServerWindow::BuildUi() {
     uiFont_ = CreateFontW(-20, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                           CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"SimSun");
@@ -242,6 +249,7 @@ void ServerWindow::BuildUi() {
     SetTimer(hwnd_, kRefreshTimerId, 800, nullptr);
 }
 
+// 按当前窗口尺寸重新计算各区域布局，避免控件重叠。
 void ServerWindow::LayoutControls() {
     RECT client{};
     GetClientRect(hwnd_, &client);
@@ -402,6 +410,7 @@ void ServerWindow::LayoutControls() {
     ResizeListColumns();
 }
 
+// 根据列表当前宽度动态调整列宽比例。
 void ServerWindow::ResizeListColumns() {
     RECT rc{};
     GetClientRect(dirList_, &rc);
@@ -427,11 +436,13 @@ void ServerWindow::ResizeListColumns() {
                                                                 static_cast<int>(transferWidth * 0.19)));
 }
 
+// 刷新顶部服务状态和启动/停止按钮文字。
 void ServerWindow::RefreshStatus() {
     win32::SetText(status_, core_.StatusText());
     SetWindowTextW(startBtn_, core_.IsRunning() ? L"停止服务" : L"启动服务");
 }
 
+// 用最新传输快照刷新底部传输列表。
 void ServerWindow::RefreshTransfers() {
     const auto transfers = core_.SnapshotTransfers();
     ListView_DeleteAllItems(transferList_);
@@ -464,6 +475,7 @@ void ServerWindow::RefreshTransfers() {
     }
 }
 
+// 刷新管理员目录管理区，并尽量保留原有选中项。
 void ServerWindow::RefreshDirectory(const std::wstring& preferredSelection) {
     std::wstring target = preferredSelection;
     if (target.empty()) {
@@ -516,6 +528,7 @@ void ServerWindow::RefreshDirectory(const std::wstring& preferredSelection) {
     }
 }
 
+// 重新加载用户列表，并选中指定用户名或当前项。
 void ServerWindow::ReloadUsers(const std::wstring& preferredName) {
     std::wstring selectedName = preferredName;
     if (selectedName.empty()) {
@@ -547,6 +560,7 @@ void ServerWindow::ReloadUsers(const std::wstring& preferredName) {
     ApplyUser(users[selectedIndex]);
 }
 
+// 清空用户表单，回到“新建用户”的初始状态。
 void ServerWindow::ClearUserFields() {
     win32::SetText(userName_, L"");
     win32::SetText(userPass_, L"");
@@ -557,6 +571,7 @@ void ServerWindow::ClearUserFields() {
     UpdatePermissionButtons();
 }
 
+// 把一个用户对象回填到界面表单和权限按钮上。
 void ServerWindow::ApplyUser(const UserRecord& user) {
     win32::SetText(userName_, Utf8ToWide(user.username));
     win32::SetText(userPass_, L"");
@@ -594,6 +609,7 @@ void ServerWindow::ApplyUser(const UserRecord& user) {
     UpdatePermissionButtons();
 }
 
+// 根据左侧列表当前选中项切换到对应用户。
 void ServerWindow::FillFromSelection() {
     const int index = ListBox_GetCurSel(userList_);
     if (index == LB_ERR) {
@@ -612,12 +628,14 @@ void ServerWindow::FillFromSelection() {
     }
 }
 
+// 进入“新建用户”模式。
 void ServerWindow::CreateNewUser() {
     SendMessageW(userList_, LB_SETCURSEL, static_cast<WPARAM>(-1), 0);
     ClearUserFields();
     SetFocus(userName_);
 }
 
+// 启动或停止服务端。
 void ServerWindow::ToggleServer() {
     if (core_.IsRunning()) {
         core_.Stop();
@@ -635,6 +653,7 @@ void ServerWindow::ToggleServer() {
     RefreshStatus();
 }
 
+// 读取当前表单内容并保存为用户记录。
 void ServerWindow::SaveUser() {
     const std::string username = TrimUserName(win32::GetText(userName_));
     if (username.empty()) {
@@ -677,6 +696,7 @@ void ServerWindow::SaveUser() {
     RefreshStatus();
 }
 
+// 删除当前表单对应的用户。
 void ServerWindow::RemoveUser() {
     const std::string username = TrimUserName(win32::GetText(userName_));
     if (username.empty()) {
@@ -694,6 +714,7 @@ void ServerWindow::RemoveUser() {
     RefreshStatus();
 }
 
+// 管理员勾选时锁定全部权限按钮；普通用户则允许手动配置。
 void ServerWindow::UpdatePermissionButtons() {
     const bool admin = Button_GetCheck(userAdmin_) == BST_CHECKED;
     for (auto& row : permissionButtons_) {
@@ -707,6 +728,7 @@ void ServerWindow::UpdatePermissionButtons() {
     UpdateHomeHint();
 }
 
+// 根据当前权限按钮组合推断一个合适的主目录显示到界面上。
 void ServerWindow::UpdateHomeHint() {
     const std::string username = TrimUserName(win32::GetText(userName_));
     const bool admin = Button_GetCheck(userAdmin_) == BST_CHECKED;
@@ -714,6 +736,7 @@ void ServerWindow::UpdateHomeHint() {
     win32::SetText(homeHint_, Utf8ToWide(home));
 }
 
+// 为新建普通用户设置一套默认权限按钮状态。
 void ServerWindow::SetPermissionDefaults() {
     for (auto& row : permissionButtons_) {
         for (HWND button : row) {
@@ -729,6 +752,7 @@ void ServerWindow::SetPermissionDefaults() {
     }
 }
 
+// 根据当前权限按钮组合推断用户登录后的默认主目录。
 std::string ServerWindow::SuggestedHome(const std::string& username, bool admin) const {
     if (admin) {
         return "/";
@@ -751,6 +775,7 @@ std::string ServerWindow::SuggestedHome(const std::string& username, bool admin)
     return userPath;
 }
 
+// 把权限按钮状态拼装成 /path:RWDN 形式的规则字符串。
 std::string ServerWindow::BuildRuleSpec(const std::string& username, bool admin) const {
     if (admin) {
         return "/:RWDN";
@@ -786,11 +811,13 @@ std::string ServerWindow::BuildRuleSpec(const std::string& username, bool admin)
     return spec.str();
 }
 
+// 获取管理员目录管理区当前所在逻辑路径。
 std::string ServerWindow::CurrentDirPath() const {
     const auto path = WideToUtf8(win32::GetText(dirPath_));
     return path.empty() ? "/" : path;
 }
 
+// 返回目录列表中当前选中的文件项。
 std::optional<FileEntry> ServerWindow::SelectedDirectoryEntry() const {
     const int index = ListView_GetNextItem(dirList_, -1, LVNI_SELECTED);
     if (index < 0 || index >= static_cast<int>(dirEntries_.size())) {
@@ -799,6 +826,7 @@ std::optional<FileEntry> ServerWindow::SelectedDirectoryEntry() const {
     return dirEntries_[index];
 }
 
+// 进入当前目录的上级目录。
 void ServerWindow::DirectoryUp() {
     const auto current = NormalizeVirtualPath(CurrentDirPath());
     if (current.empty() || current == "/") {
@@ -811,6 +839,7 @@ void ServerWindow::DirectoryUp() {
     RefreshDirectory();
 }
 
+// 在当前目录下创建子目录。
 void ServerWindow::DirectoryMake() {
     const auto name = Trim(WideToUtf8(win32::GetText(dirInput_)));
     if (name.empty()) {
@@ -826,6 +855,7 @@ void ServerWindow::DirectoryMake() {
     RefreshDirectory(Utf8ToWide(name));
 }
 
+// 重命名当前选中的文件或目录。
 void ServerWindow::DirectoryRename() {
     const auto selected = SelectedDirectoryEntry();
     if (!selected) {
@@ -847,6 +877,7 @@ void ServerWindow::DirectoryRename() {
     RefreshDirectory(Utf8ToWide(newName));
 }
 
+// 删除当前选中的文件或目录。
 void ServerWindow::DirectoryDelete() {
     const auto selected = SelectedDirectoryEntry();
     if (!selected) {
@@ -862,6 +893,7 @@ void ServerWindow::DirectoryDelete() {
     RefreshDirectory();
 }
 
+// 双击目录列表时进入被选中的子目录。
 void ServerWindow::OpenSelectedDirectory() {
     const auto selected = SelectedDirectoryEntry();
     if (selected && selected->isDir) {
@@ -870,10 +902,12 @@ void ServerWindow::OpenSelectedDirectory() {
     }
 }
 
+// 统一弹出管理员面板提示框。
 void ServerWindow::AlertUser(const std::wstring& text) const {
     win32::Alert(hwnd_, L"FDS 服务端", text);
 }
 
+// 主窗口消息分发：负责按钮点击、列表双击、定时刷新和布局重排。
 LRESULT CALLBACK ServerWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     ServerWindow* self = nullptr;
     if (msg == WM_NCCREATE) {

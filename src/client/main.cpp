@@ -27,6 +27,7 @@ struct ScriptOptions {
     std::string downloadLocal;
 };
 
+// 解析命令行脚本模式参数。
 ScriptOptions ParseScriptOptions(int argc, wchar_t** argv) {
     ScriptOptions options;
     for (int i = 1; i < argc; ++i) {
@@ -51,9 +52,11 @@ ScriptOptions ParseScriptOptions(int argc, wchar_t** argv) {
     return options;
 }
 
+// 客户端脚本模式：用于联调登录、上传、下载和列目录。
 int RunScript(int argc, wchar_t** argv) {
     const ScriptOptions options = ParseScriptOptions(argc, argv);
 
+    // 先建立控制连接，后续脚本中的上传下载会复用该会话。
     CommandClient client;
     std::string error;
     if (!client.Connect(options.host, options.port, options.user, options.pass, options.anonymous, error)) {
@@ -101,6 +104,7 @@ int RunScript(int argc, wchar_t** argv) {
 }  // namespace
 
 int wmain(int argc, wchar_t** argv) {
+    // 图形界面和文件选择器依赖 Winsock 与 OLE 生命周期。
     fds::win32::ScopedSockets sockets;
     fds::win32::ScopedOle ole;
 
@@ -110,6 +114,7 @@ int wmain(int argc, wchar_t** argv) {
         }
     }
 
+    // 默认启动图形化客户端。
     fds::clientapp::ClientWindow app(GetModuleHandleW(nullptr));
     return app.Run(SW_SHOW);
 }

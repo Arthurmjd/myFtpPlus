@@ -7,6 +7,7 @@ namespace fds::serverapp {
 
 namespace {
 
+// 传输工作线程里的 socket RAII，保证提前返回时也能关闭连接。
 class SocketGuard {
 public:
     explicit SocketGuard(SOCKET sock) : sock_(sock) {}
@@ -19,6 +20,7 @@ private:
     SOCKET sock_;
 };
 
+// 进入传输线程时增加计数，退出时自动减少计数。
 class TransferCounterGuard {
 public:
     explicit TransferCounterGuard(std::atomic<int>& counter) : counter_(counter) {
@@ -33,6 +35,7 @@ private:
     std::atomic<int>& counter_;
 };
 
+// 生成默认用户记录，用于首次启动时的种子数据。
 UserRecord MakeDefaultUser(const std::string& name, const std::string& plainPassword, bool admin = false) {
     UserRecord user;
     user.username = name;
@@ -50,10 +53,12 @@ UserRecord MakeDefaultUser(const std::string& name, const std::string& plainPass
     return user;
 }
 
+// 匿名用户只允许访问公共下载区域。
 std::vector<PermissionRule> AnonymousRules() {
     return ParseRuleSpec("/public:R;/download:R");
 }
 
+// 用户名校验：拒绝空名、点目录和非法路径字符。
 bool IsValidUserName(const std::string& username) {
     if (username.empty() || username == "." || username == "..") {
         return false;
@@ -61,12 +66,14 @@ bool IsValidUserName(const std::string& username) {
     return username.find_first_of("\\/\t\r\n") == std::string::npos;
 }
 
+// 把字符串安全解析成 uint64。
 std::uint64_t ParseU64(const std::string& value) {
     return value.empty() ? 0 : std::strtoull(value.c_str(), nullptr, 10);
 }
 
 }  // namespace
 
+// 初始化服务端数据目录、根目录和用户存储位置。
 ServerCore::ServerCore()
     : dataDir_(std::filesystem::current_path() / L"data"),
       rootDir_(dataDir_ / L"server_root"),
@@ -76,10 +83,12 @@ ServerCore::ServerCore()
     EnsureLayout();
 }
 
+// 析构时确保服务端完整停止。
 ServerCore::~ServerCore() {
     Stop();
 }
 
+// 打开监听 socket，并启动 select 主循环线程。
 bool ServerCore::Start(int port, std::string& error) {
     if (running_) {
         return true;
@@ -98,6 +107,7 @@ bool ServerCore::Start(int port, std::string& error) {
     return true;
 }
 
+// 停止服务端，关闭监听和活跃传输连接，并清空会话。
 void ServerCore::Stop() {
     if (!running_) {
         return;
@@ -135,10 +145,12 @@ void ServerCore::Stop() {
     activeClients_ = 0;
 }
 
+// 返回当前服务是否处于运行状态。
 bool ServerCore::IsRunning() const {
     return running_;
 }
 
+// 为管理员面板拼装一行可读的服务状态文本。
 std::wstring ServerCore::StatusText() const {
     std::string storageError;
     {
@@ -155,6 +167,7 @@ std::wstring ServerCore::StatusText() const {
     return Utf8ToWide(out.str());
 }
 
+// 拍一个当前用户列表快照，供管理员面板展示。
 std::vector<UserRecord> ServerCore::SnapshotUsers() {
     std::lock_guard lock(mu_);
     std::vector<UserRecord> snapshot;
@@ -168,6 +181,7 @@ std::vector<UserRecord> ServerCore::SnapshotUsers() {
     return snapshot;
 }
 
+// 以管理员身份列出指定目录内容。
 std::vector<FileEntry> ServerCore::SnapshotAdminDirectory(const std::string& path, std::string& cwd,
                                                           std::string& error) const {
     const auto resolved = ResolveAdminPath(path);
@@ -186,6 +200,7 @@ std::vector<FileEntry> ServerCore::SnapshotAdminDirectory(const std::string& pat
     return EnumerateDirectory(resolved->real, resolved->virtualPath);
 }
 
+// 以管理员身份创建目录。
 bool ServerCore::AdminMakeDir(const std::string& path, std::string& error) {
     const auto resolved = ResolveAdminPath(path, true);
     if (!resolved) {
@@ -202,6 +217,7 @@ bool ServerCore::AdminMakeDir(const std::string& path, std::string& error) {
     return true;
 }
 
+// 以管理员身份删除目录或文件。
 bool ServerCore::AdminRemove(const std::string& path, std::string& error) {
     const auto resolved = ResolveAdminPath(path);
     if (!resolved || resolved->virtualPath == "/") {
@@ -218,6 +234,7 @@ bool ServerCore::AdminRemove(const std::string& path, std::string& error) {
     return true;
 }
 
+// 以管理员身份重命名目录或文件。
 bool ServerCore::AdminRename(const std::string& path, const std::string& newName, std::string& error) {
     auto cleanName = Trim(newName);
     if (cleanName.empty() || cleanName.find('/') != std::string::npos || cleanName.find('\\') != std::string::npos) {
@@ -241,6 +258,7 @@ bool ServerCore::AdminRename(const std::string& path, const std::string& newName
     return true;
 }
 
+// 返回最近传输任务的快照，供管理员面板刷新传输列表。
 std::vector<TransferSnapshot> ServerCore::SnapshotTransfers() const {
     std::lock_guard lock(transferMu_);
     auto snapshot = transfers_;
@@ -250,6 +268,7 @@ std::vector<TransferSnapshot> ServerCore::SnapshotTransfers() const {
     return snapshot;
 }
 
+// 新增或更新一个用户，并在需要时更新密码哈希。
 bool ServerCore::UpsertUser(const UserRecord& input, const std::string& plainPassword, std::string& error) {
     auto user = input;
     user.username = Trim(user.username);
@@ -292,6 +311,7 @@ bool ServerCore::UpsertUser(const UserRecord& input, const std::string& plainPas
     return true;
 }
 
+// 删除一个普通用户；保留 admin 账户不允许删除。
 bool ServerCore::DeleteUser(const std::string& username, std::string& error) {
     if (username.empty() || username == "admin") {
         error = "admin 用户不能删除";
@@ -312,6 +332,7 @@ bool ServerCore::DeleteUser(const std::string& username, std::string& error) {
     return true;
 }
 
+// 准备默认目录结构，并在首次启动时写入欢迎文件。
 void ServerCore::EnsureLayout() {
     std::filesystem::create_directories(rootDir_ / L"public");
     std::filesystem::create_directories(rootDir_ / L"download");
@@ -323,6 +344,7 @@ void ServerCore::EnsureLayout() {
     LoadUsersLocked();
 }
 
+// 为普通用户准备个人目录和上传目录。
 void ServerCore::EnsureUserDirsLocked(const UserRecord& user) {
     if (user.admin) {
         return;
@@ -331,6 +353,7 @@ void ServerCore::EnsureUserDirsLocked(const UserRecord& user) {
     std::filesystem::create_directories(rootDir_ / L"upload" / Utf8ToWide(user.username));
 }
 
+// 生成首次启动时的默认用户列表。
 std::vector<UserRecord> ServerCore::SeedUsers() const {
     return {
         MakeDefaultUser("admin", "admin123", true),
@@ -338,6 +361,7 @@ std::vector<UserRecord> ServerCore::SeedUsers() const {
     };
 }
 
+// 从持久化存储加载用户；失败时回退到种子用户。
 void ServerCore::LoadUsersLocked() {
     std::lock_guard lock(mu_);
     users_.clear();
@@ -356,6 +380,7 @@ void ServerCore::LoadUsersLocked() {
     }
 }
 
+// 把内存中的用户表完整写回存储层。
 bool ServerCore::SaveUsersLocked(std::string& error) {
     std::vector<UserRecord> users;
     users.reserve(users_.size());
@@ -372,6 +397,7 @@ bool ServerCore::SaveUsersLocked(std::string& error) {
     return true;
 }
 
+// 把管理员输入的逻辑路径解析成真实路径。
 std::optional<ServerCore::ResolvedPath> ServerCore::ResolveAdminPath(const std::string& rawPath,
                                                                      bool allowMissing) const {
     const auto cleanPath = NormalizeVirtualPath(rawPath.empty() ? "/" : rawPath);
@@ -388,6 +414,7 @@ std::optional<ServerCore::ResolvedPath> ServerCore::ResolveAdminPath(const std::
     return ResolvedPath{realPath, cleanPath};
 }
 
+// 按 session id 查找当前会话。
 std::optional<SessionInfo> ServerCore::FindSession(std::uint32_t sessionId) {
     std::lock_guard lock(mu_);
     const auto it = sessions_.find(sessionId);
@@ -397,6 +424,7 @@ std::optional<SessionInfo> ServerCore::FindSession(std::uint32_t sessionId) {
     return it->second;
 }
 
+// 结合会话权限把逻辑路径解析成真实路径。
 std::optional<ServerCore::ResolvedPath> ServerCore::ResolvePath(const SessionInfo& session, const std::string& rawPath,
                                                                 std::uint32_t bit, bool allowMissing) {
     const auto cleanPath = NormalizeVirtualPath(rawPath.empty() ? session.home : rawPath);
@@ -416,6 +444,7 @@ std::optional<ServerCore::ResolvedPath> ServerCore::ResolvePath(const SessionInf
     return ResolvedPath{realPath, cleanPath};
 }
 
+// 新建一条传输快照并返回传输编号。
 std::uint32_t ServerCore::StartTransfer(const std::string& username, const std::string& direction, const std::string& path,
                                         std::uint64_t total) {
     TransferSnapshot transfer;
@@ -435,6 +464,7 @@ std::uint32_t ServerCore::StartTransfer(const std::string& username, const std::
     return transfers_.back().id;
 }
 
+// 更新传输进度、状态和最后更新时间。
 void ServerCore::UpdateTransfer(std::uint32_t id, std::uint64_t done, std::uint64_t total, const std::string& status,
                                 const std::string& detail) {
     std::lock_guard lock(transferMu_);
@@ -455,19 +485,23 @@ void ServerCore::UpdateTransfer(std::uint32_t id, std::uint64_t done, std::uint6
     }
 }
 
+// 用最终状态封口一条传输记录。
 void ServerCore::FinishTransfer(std::uint32_t id, const std::string& status, const std::string& detail, std::uint64_t done,
                                 std::uint64_t total) {
     UpdateTransfer(id, done, total, status, detail);
 }
 
+// 统一发送错误响应。
 void ServerCore::ReplyError(SOCKET sock, const NetPacket& req, const std::string& message) {
     SendPacket(sock, Cmd::Error, req.seq, req.session, SerializePairs({{"message", message}}));
 }
 
+// 统一发送成功响应。
 void ServerCore::ReplyOk(SOCKET sock, const NetPacket& req, const std::map<std::string, std::string>& data) {
     SendPacket(sock, Cmd::Ok, req.seq, req.session, SerializePairs(data));
 }
 
+// 把根目录中的实际路径转换成更友好的展示名称。
 std::string ServerCore::RootLabelForPath(const SessionInfo& session, const std::string& path) const {
     const auto virtualPath = NormalizeVirtualPath(path);
     if (virtualPath == "/public") {
@@ -488,6 +522,7 @@ std::string ServerCore::RootLabelForPath(const SessionInfo& session, const std::
     return virtualPath == "/" ? "/" : virtualPath.substr(1);
 }
 
+// 向普通用户的“根目录快捷入口”列表中追加一项。
 void ServerCore::AddRootShortcut(std::vector<FileEntry>& out, std::set<std::string>& seen, const SessionInfo& session,
                                  const std::string& path) const {
     const auto virtualPath = NormalizeVirtualPath(path);
@@ -515,6 +550,7 @@ void ServerCore::AddRootShortcut(std::vector<FileEntry>& out, std::set<std::stri
     out.push_back(std::move(entry));
 }
 
+// 列出某个会话登录后在根目录下能看到的入口。
 std::vector<FileEntry> ServerCore::EnumerateSessionRoot(const SessionInfo& session) const {
     if (session.admin) {
         auto entries = EnumerateDirectory(rootDir_, "/");
@@ -539,6 +575,7 @@ std::vector<FileEntry> ServerCore::EnumerateSessionRoot(const SessionInfo& sessi
     return entries;
 }
 
+// 把目录列表结果打包成协议正文。
 std::string ServerCore::BuildListResponse(const std::string& cwd, const std::vector<FileEntry>& entries) const {
     std::string body = MakeLine({"PWD", cwd});
     for (const auto& entry : entries) {
@@ -554,6 +591,7 @@ std::string ServerCore::BuildListResponse(const std::string& cwd, const std::vec
     return body;
 }
 
+// 处理登录命令，支持普通登录和匿名登录两种模式。
 void ServerCore::HandleLogin(SOCKET sock, const NetPacket& req) {
     const auto pairs = ParsePairs(req.body);
     const bool anonymous = pairs.contains("anonymous") && pairs.at("anonymous") == "1";
@@ -600,6 +638,7 @@ void ServerCore::HandleLogin(SOCKET sock, const NetPacket& req) {
                }));
 }
 
+// 处理列目录命令：根目录走快捷入口，普通目录走权限校验。
 void ServerCore::HandleList(SOCKET sock, const NetPacket& req) {
     auto session = FindSession(req.session);
     if (!session) {
@@ -636,6 +675,7 @@ void ServerCore::HandleList(SOCKET sock, const NetPacket& req) {
                BuildListResponse(resolved->virtualPath, EnumerateDirectory(resolved->real, resolved->virtualPath)));
 }
 
+// 处理创建目录命令。
 void ServerCore::HandleMakeDir(SOCKET sock, const NetPacket& req) {
     auto session = FindSession(req.session);
     if (!session) {
@@ -665,6 +705,7 @@ void ServerCore::HandleMakeDir(SOCKET sock, const NetPacket& req) {
     ReplyOk(sock, req);
 }
 
+// 处理删除命令。
 void ServerCore::HandleRemove(SOCKET sock, const NetPacket& req) {
     auto session = FindSession(req.session);
     if (!session) {
@@ -694,6 +735,7 @@ void ServerCore::HandleRemove(SOCKET sock, const NetPacket& req) {
     ReplyOk(sock, req);
 }
 
+// 处理重命名命令。
 void ServerCore::HandleRename(SOCKET sock, const NetPacket& req) {
     auto session = FindSession(req.session);
     if (!session) {
@@ -730,11 +772,13 @@ void ServerCore::HandleRename(SOCKET sock, const NetPacket& req) {
     ReplyOk(sock, req);
 }
 
+// 处理注销命令，直接移除会话。
 void ServerCore::HandleLogout(const NetPacket& req) {
     std::lock_guard lock(mu_);
     sessions_.erase(req.session);
 }
 
+// 控制连接上的总分发器：根据命令类型跳到对应处理函数。
 void ServerCore::HandleCommand(SOCKET sock, const NetPacket& req, bool& removeSocket, bool& keepSocketOpen) {
     switch (req.cmd) {
         case Cmd::Login:
@@ -775,6 +819,7 @@ void ServerCore::HandleCommand(SOCKET sock, const NetPacket& req, bool& removeSo
     }
 }
 
+// 把上传连接移交给后台线程继续处理。
 void ServerCore::SpawnUploadWorker(SOCKET sock, NetPacket req) {
     RegisterTransferSocket(sock);
     std::thread([this, sock, req] {
@@ -790,6 +835,7 @@ void ServerCore::SpawnUploadWorker(SOCKET sock, NetPacket req) {
     }).detach();
 }
 
+// 把下载连接移交给后台线程继续处理。
 void ServerCore::SpawnDownloadWorker(SOCKET sock, NetPacket req) {
     RegisterTransferSocket(sock);
     std::thread([this, sock, req] {
@@ -805,11 +851,13 @@ void ServerCore::SpawnDownloadWorker(SOCKET sock, NetPacket req) {
     }).detach();
 }
 
+// 记录一条活跃传输 socket，便于停服时统一中断。
 void ServerCore::RegisterTransferSocket(SOCKET sock) {
     std::lock_guard lock(mu_);
     transferSockets_.push_back(sock);
 }
 
+// 传输结束后把 socket 从活跃集合中移除。
 void ServerCore::UnregisterTransferSocket(SOCKET sock) {
     std::lock_guard lock(mu_);
     const auto it = std::find(transferSockets_.begin(), transferSockets_.end(), sock);
@@ -818,6 +866,7 @@ void ServerCore::UnregisterTransferSocket(SOCKET sock) {
     }
 }
 
+// 上传工作线程：协商偏移、接收分块、写文件并校验 SHA-256。
 void ServerCore::UploadWorker(SOCKET sock, const NetPacket& req) {
     SocketGuard guard(sock);
 
@@ -921,6 +970,7 @@ void ServerCore::UploadWorker(SOCKET sock, const NetPacket& req) {
     }
 }
 
+// 下载工作线程：协商偏移、发送分块并在结束时附带 SHA-256。
 void ServerCore::DownloadWorker(SOCKET sock, const NetPacket& req) {
     SocketGuard guard(sock);
 
@@ -1001,6 +1051,7 @@ void ServerCore::DownloadWorker(SOCKET sock, const NetPacket& req) {
     FinishTransfer(transferId, "完成", "传输完成", offset, total);
 }
 
+// select 主循环：接受新连接、读取轻量命令、把传输连接移交给工作线程。
 void ServerCore::Loop() {
     while (running_) {
         fd_set readSet;

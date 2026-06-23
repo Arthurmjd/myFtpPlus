@@ -46,10 +46,12 @@ constexpr int kBaseHeight = 860;
 
 }  // namespace
 
+// 保存应用实例句柄，并准备常用连接文件路径。
 ClientWindow::ClientWindow(HINSTANCE instance)
     : instance_(instance),
       favorites_(std::filesystem::current_path() / L"data" / L"client_favorites.tsv") {}
 
+// 释放界面字体资源。
 ClientWindow::~ClientWindow() {
     if (uiFont_) {
         DeleteObject(uiFont_);
@@ -59,6 +61,7 @@ ClientWindow::~ClientWindow() {
     }
 }
 
+// 创建主窗口并进入标准 Win32 消息循环。
 int ClientWindow::Run(int showCmd) {
     INITCOMMONCONTROLSEX controls{};
     controls.dwSize = sizeof(controls);
@@ -86,6 +89,7 @@ int ClientWindow::Run(int showCmd) {
     return static_cast<int>(msg.wParam);
 }
 
+// 把控件加入某个视图分组，并统一设置界面字体。
 HWND ClientWindow::Track(std::vector<HWND>& bucket, HWND hwnd) {
     if (hwnd) {
         bucket.push_back(hwnd);
@@ -96,6 +100,7 @@ HWND ClientWindow::Track(std::vector<HWND>& bucket, HWND hwnd) {
     return hwnd;
 }
 
+// 记录控件基准位置，供窗口缩放时统一重排。
 HWND ClientWindow::Place(HWND hwnd, int x, int y, int w, int h) {
     if (!hwnd) {
         return nullptr;
@@ -104,6 +109,7 @@ HWND ClientWindow::Place(HWND hwnd, int x, int y, int w, int h) {
     return hwnd;
 }
 
+// 搭建客户端的登录区、文件区、任务区和底部状态栏。
 void ClientWindow::BuildUi() {
     uiFont_ = CreateFontW(-20, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                           CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"SimSun");
@@ -125,6 +131,7 @@ void ClientWindow::BuildUi() {
     LayoutControls();
 }
 
+// 构建未登录时显示的登录界面。
 void ClientWindow::BuildLoginView() {
     auto title = Track(loginControls_, Place(CreateWindowW(L"STATIC", L"连接服务", WS_CHILD | WS_VISIBLE | SS_CENTER, 470, 54,
                                                            340, 36, hwnd_, nullptr, instance_, nullptr),
@@ -201,6 +208,7 @@ void ClientWindow::BuildLoginView() {
                                 778, 530, 132, 38));
 }
 
+// 构建登录成功后显示的文件浏览与任务界面。
 void ClientWindow::BuildClientView() {
     currentUser_ = Track(clientControls_, Place(CreateWindowW(L"STATIC", L"用户: 未登录", WS_CHILD | WS_VISIBLE, 24, 24,
                                                               940, 26, hwnd_, nullptr, instance_, nullptr),
@@ -320,6 +328,7 @@ void ClientWindow::BuildClientView() {
     win32::AddColumn(taskList_, 6, 220, L"说明");
 }
 
+// 按当前窗口大小对所有控件做等比例布局。
 void ClientWindow::LayoutControls() {
     RECT client{};
     GetClientRect(hwnd_, &client);
@@ -337,6 +346,7 @@ void ClientWindow::LayoutControls() {
     ResizeListColumns();
 }
 
+// 根据列表当前宽度动态调整文件列表和任务列表的列宽。
 void ClientWindow::ResizeListColumns() {
     RECT rc{};
     GetClientRect(fileList_, &rc);
@@ -360,6 +370,7 @@ void ClientWindow::ResizeListColumns() {
                                                              static_cast<int>(taskWidth * 0.10)));
 }
 
+// 在登录视图和业务视图之间切换显示。
 void ClientWindow::SetView(bool loggedIn) {
     loggedIn_ = loggedIn;
     for (HWND control : loginControls_) {
@@ -373,14 +384,17 @@ void ClientWindow::SetView(bool loggedIn) {
     SetFocus(loggedIn ? fileList_ : hostEdit_);
 }
 
+// 更新底部状态栏文字。
 void ClientWindow::SetStatus(const std::wstring& text) {
     win32::SetText(status_, text);
 }
 
+// 统一弹出客户端提示框。
 void ClientWindow::AlertUser(const std::wstring& text) const {
     win32::Alert(hwnd_, L"FDS 客户端", text);
 }
 
+// 切换匿名登录时，动态启用或禁用用户名密码输入框。
 void ClientWindow::UpdateLoginMode() {
     const bool anonymous = Button_GetCheck(modeAnonRadio_) == BST_CHECKED;
     EnableWindow(userLabel_, !anonymous);
@@ -389,6 +403,7 @@ void ClientWindow::UpdateLoginMode() {
     EnableWindow(passEdit_, !anonymous);
 }
 
+// 刷新顶部当前用户、权限和主目录信息。
 void ClientWindow::UpdateSessionBanner() {
     std::wstring text;
     if (client_.Username() == "anonymous") {
@@ -405,6 +420,7 @@ void ClientWindow::UpdateSessionBanner() {
     win32::SetText(currentUser_, text.empty() ? L"用户: 未登录" : text);
 }
 
+// 清空当前目录缓存和历史记录，回到初始浏览状态。
 void ClientWindow::ResetBrowserState() {
     entries_.clear();
     history_.Reset();
@@ -412,11 +428,13 @@ void ClientWindow::ResetBrowserState() {
     RefreshFileList();
 }
 
+// 从本地文件加载常用连接。
 void ClientWindow::LoadFavorites() {
     favorites_.Load();
     RefreshFavoritesBox();
 }
 
+// 刷新常用连接下拉框。
 void ClientWindow::RefreshFavoritesBox() {
     const int selected = static_cast<int>(SendMessageW(favoritesBox_, CB_GETCURSEL, 0, 0));
     SendMessageW(favoritesBox_, CB_RESETCONTENT, 0, 0);
@@ -432,6 +450,7 @@ void ClientWindow::RefreshFavoritesBox() {
     }
 }
 
+// 把当前连接参数保存为一条常用连接。
 void ClientWindow::SaveFavorite() {
     Favorite favorite;
     favorite.host = WideToUtf8(win32::GetText(hostEdit_));
@@ -456,6 +475,7 @@ void ClientWindow::SaveFavorite() {
     SetStatus(L"连接已保存");
 }
 
+// 读取下拉框中选中的常用连接，并回填到登录表单。
 void ClientWindow::LoadFavoriteSelection() {
     const int index = static_cast<int>(SendMessageW(favoritesBox_, CB_GETCURSEL, 0, 0));
     const Favorite* favorite = favorites_.Get(static_cast<std::size_t>(index));
@@ -471,6 +491,7 @@ void ClientWindow::LoadFavoriteSelection() {
     UpdateLoginMode();
 }
 
+// 浏览指定逻辑路径，并在需要时压入前进/后退历史。
 bool ClientWindow::Browse(const std::string& path, bool pushHistory) {
     if (!client_.Connected()) {
         return false;
@@ -494,10 +515,12 @@ bool ClientWindow::Browse(const std::string& path, bool pushHistory) {
     return true;
 }
 
+// 读取当前路径输入框中的逻辑路径。
 std::string ClientWindow::CurrentPath() const {
     return WideToUtf8(win32::GetText(pathEdit_));
 }
 
+// 用当前目录缓存刷新文件列表控件。
 void ClientWindow::RefreshFileList() {
     ListView_DeleteAllItems(fileList_);
     for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
@@ -522,6 +545,7 @@ void ClientWindow::RefreshFileList() {
     }
 }
 
+// 用 TaskManager 当前任务快照刷新任务列表控件。
 void ClientWindow::RefreshTasks() {
     const auto& items = taskManager_.Items();
     const int selectedIndex = ListView_GetNextItem(taskList_, -1, LVNI_SELECTED);
@@ -570,6 +594,7 @@ void ClientWindow::RefreshTasks() {
     }
 }
 
+// 取出文件列表中当前选中的目录项。
 std::optional<FileEntry> ClientWindow::SelectedEntry() const {
     const int index = ListView_GetNextItem(fileList_, -1, LVNI_SELECTED);
     if (index < 0 || index >= static_cast<int>(entries_.size())) {
@@ -578,21 +603,25 @@ std::optional<FileEntry> ClientWindow::SelectedEntry() const {
     return entries_[index];
 }
 
+// 取出任务列表中当前选中的传输任务。
 std::shared_ptr<TransferTask> ClientWindow::SelectedTask() const {
     const int index = ListView_GetNextItem(taskList_, -1, LVNI_SELECTED);
     return taskManager_.GetAt(index);
 }
 
+// 组装当前登录会话的连接信息，供上传下载任务使用。
 ConnectionInfo ClientWindow::CurrentConnection() const {
     return {client_.Host(), client_.Port(), client_.Session()};
 }
 
+// 创建一个上传或下载任务并立刻刷新任务列表。
 void ClientWindow::QueueTask(bool upload, const std::wstring& local, const std::string& remote) {
     taskManager_.Add(upload, local, remote, CurrentConnection());
     RefreshTasks();
     SetStatus(upload ? L"上传任务已加入队列" : L"下载任务已加入队列");
 }
 
+// 读取登录表单，建立控制连接并进入根目录浏览。
 void ClientWindow::ConnectServer() {
     if (loggedIn_) {
         return;
@@ -633,6 +662,7 @@ void ClientWindow::ConnectServer() {
     SetStatus(L"连接成功");
 }
 
+// 注销当前会话；若仍有运行任务，则阻止退出。
 void ClientWindow::Logout() {
     if (taskManager_.HasRunningTasks()) {
         AlertUser(L"当前还有传输任务在进行，请先暂停、取消或等待完成后再退出登录");
@@ -646,6 +676,7 @@ void ClientWindow::Logout() {
     SetStatus(L"已退出登录");
 }
 
+// 选择一个本地文件并创建上传任务。
 void ClientWindow::UploadFile() {
     if (!client_.Connected()) {
         return;
@@ -660,6 +691,7 @@ void ClientWindow::UploadFile() {
     QueueTask(true, file, JoinRemotePath(CurrentPath(), name));
 }
 
+// 选择一个本地目录，递归建目录并为每个文件创建上传任务。
 void ClientWindow::UploadDirectory() {
     if (!client_.Connected()) {
         return;
@@ -706,6 +738,7 @@ void ClientWindow::UploadDirectory() {
     SetStatus(L"目录上传任务已加入队列");
 }
 
+// 选择本地保存位置，并为当前选中文件创建下载任务。
 void ClientWindow::DownloadFile() {
     if (!client_.Connected()) {
         return;
@@ -725,6 +758,7 @@ void ClientWindow::DownloadFile() {
     QueueTask(false, local, selected->path);
 }
 
+// 删除当前选中的远程文件或目录。
 void ClientWindow::RemoveEntry() {
     if (!client_.Connected()) {
         return;
@@ -745,6 +779,7 @@ void ClientWindow::RemoveEntry() {
     SetStatus(L"删除成功");
 }
 
+// 在当前远程目录下创建子目录。
 void ClientWindow::MakeDir() {
     if (!client_.Connected()) {
         return;
@@ -766,6 +801,7 @@ void ClientWindow::MakeDir() {
     SetStatus(L"目录创建成功");
 }
 
+// 重命名当前选中的远程文件或目录。
 void ClientWindow::RenameEntry() {
     if (!client_.Connected()) {
         return;
@@ -792,6 +828,7 @@ void ClientWindow::RenameEntry() {
     SetStatus(L"重命名成功");
 }
 
+// 请求暂停当前选中的传输任务。
 void ClientWindow::PauseTask() {
     if (const auto task = SelectedTask()) {
         taskManager_.Pause(task);
@@ -799,6 +836,7 @@ void ClientWindow::PauseTask() {
     }
 }
 
+// 请求继续当前选中的传输任务。
 void ClientWindow::ResumeTask() {
     if (!client_.Connected()) {
         AlertUser(L"请先连接服务器");
@@ -810,6 +848,7 @@ void ClientWindow::ResumeTask() {
     }
 }
 
+// 请求取消当前选中的传输任务。
 void ClientWindow::CancelTask() {
     if (const auto task = SelectedTask()) {
         taskManager_.Cancel(task);
@@ -817,18 +856,21 @@ void ClientWindow::CancelTask() {
     }
 }
 
+// 浏览历史后退。
 void ClientWindow::Back() {
     if (const auto path = history_.Back()) {
         Browse(*path, false);
     }
 }
 
+// 浏览历史前进。
 void ClientWindow::Forward() {
     if (const auto path = history_.Forward()) {
         Browse(*path, false);
     }
 }
 
+// 进入当前目录的上一级。
 void ClientWindow::Up() {
     const auto current = NormalizeVirtualPath(CurrentPath());
     if (current.empty() || current == "/") {
@@ -840,6 +882,7 @@ void ClientWindow::Up() {
     Browse(parent, true);
 }
 
+// 双击目录列表时进入选中的子目录。
 void ClientWindow::EnterSelected() {
     const auto selected = SelectedEntry();
     if (selected && selected->isDir) {
@@ -847,6 +890,7 @@ void ClientWindow::EnterSelected() {
     }
 }
 
+// 分发按钮命令和菜单命令。
 LRESULT ClientWindow::HandleCommand(WPARAM wParam, LPARAM) {
     switch (LOWORD(wParam)) {
         case IDC_MODE_USER:
@@ -909,6 +953,7 @@ LRESULT ClientWindow::HandleCommand(WPARAM wParam, LPARAM) {
     }
 }
 
+// 处理列表双击等通知消息。
 LRESULT ClientWindow::HandleNotify(LPARAM lParam) {
     const auto* header = reinterpret_cast<LPNMHDR>(lParam);
     if (header->idFrom == IDC_FILES && header->code == NM_DBLCLK) {
@@ -917,6 +962,7 @@ LRESULT ClientWindow::HandleNotify(LPARAM lParam) {
     return 0;
 }
 
+// 主窗口消息分发：负责创建 UI、处理点击、定时刷新任务和窗口布局。
 LRESULT CALLBACK ClientWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     ClientWindow* self = nullptr;
     if (msg == WM_NCCREATE) {

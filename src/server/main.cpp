@@ -6,6 +6,7 @@
 
 namespace {
 
+// 解析无界面模式下传入的端口参数。
 int ParsePortArg(int argc, wchar_t** argv) {
     int port = fds::kDefaultPort;
     for (int i = 1; i < argc; ++i) {
@@ -16,6 +17,7 @@ int ParsePortArg(int argc, wchar_t** argv) {
     return port > 0 ? port : fds::kDefaultPort;
 }
 
+// 服务端脚本/守护运行入口，不创建图形界面。
 int RunHeadless(int argc, wchar_t** argv) {
     const int port = ParsePortArg(argc, argv);
 
@@ -36,6 +38,7 @@ int RunHeadless(int argc, wchar_t** argv) {
 }  // namespace
 
 int wmain(int argc, wchar_t** argv) {
+    // 整个进程只需要一份 Winsock 生命周期管理。
     fds::win32::ScopedSockets sockets;
 
     for (int i = 1; i < argc; ++i) {
@@ -44,6 +47,7 @@ int wmain(int argc, wchar_t** argv) {
         }
     }
 
+    // 默认启动图形化管理员面板。
     fds::serverapp::ServerWindow app(GetModuleHandleW(nullptr));
     return app.Run(SW_SHOW);
 }

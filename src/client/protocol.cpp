@@ -7,6 +7,7 @@ namespace fds::clientapp {
 
 namespace {
 
+// 小型 RAII 封装，保证函数提前返回时也能关闭传输 socket。
 class SocketGuard {
 public:
     explicit SocketGuard(SOCKET sock = INVALID_SOCKET) : sock_(sock) {}
@@ -23,12 +24,14 @@ private:
     SOCKET sock_;
 };
 
+// 从响应包中提取 message 字段，统一错误提示来源。
 std::string PacketMessage(const NetPacket& packet, const std::string& fallback) {
     const auto pairs = ParsePairs(packet.body);
     const auto it = pairs.find("message");
     return it == pairs.end() ? fallback : it->second;
 }
 
+// 接收并校验一个预期的响应命令，统一处理断线和错误包。
 bool ReceiveExpected(SOCKET sock, Cmd expected, NetPacket& packet, const std::string& disconnectedMessage,
                      std::string& error) {
     if (!RecvPacket(sock, packet)) {
@@ -46,16 +49,19 @@ bool ReceiveExpected(SOCKET sock, Cmd expected, NetPacket& packet, const std::st
     return true;
 }
 
+// 简化 TransferResult 的构造。
 TransferResult MakeResult(TransferOutcome outcome, std::string message = {}) {
     return {outcome, std::move(message)};
 }
 
 }  // namespace
 
+// 析构时自动断开控制连接，避免遗留会话。
 CommandClient::~CommandClient() {
     Disconnect();
 }
 
+// 建立控制连接并完成登录握手，同时保存当前会话信息。
 bool CommandClient::Connect(const std::string& host, int port, const std::string& user, const std::string& password,
                             bool anonymous, std::string& error) {
     Disconnect();
@@ -99,6 +105,7 @@ bool CommandClient::Connect(const std::string& host, int port, const std::string
     return true;
 }
 
+// 主动发送 Logout 并关闭控制连接。
 void CommandClient::Disconnect() {
     if (sock_ != INVALID_SOCKET && session_ != 0) {
         SendPacket(sock_, Cmd::Logout, nextSeq_++, session_, "");
@@ -113,34 +120,42 @@ void CommandClient::Disconnect() {
     user_.clear();
 }
 
+// 判断控制连接和会话是否都仍然有效。
 bool CommandClient::Connected() const {
     return sock_ != INVALID_SOCKET && session_ != 0;
 }
 
+// 返回当前登录会话 ID。
 std::uint32_t CommandClient::Session() const {
     return session_;
 }
 
+// 返回当前服务端主机名。
 const std::string& CommandClient::Host() const {
     return host_;
 }
 
+// 返回当前服务端端口。
 int CommandClient::Port() const {
     return port_;
 }
 
+// 返回服务端为该用户设置的主目录。
 const std::string& CommandClient::Home() const {
     return home_;
 }
 
+// 返回当前登录用户名。
 const std::string& CommandClient::Username() const {
     return user_;
 }
 
+// 当前会话是否拥有管理员身份。
 bool CommandClient::IsAdmin() const {
     return admin_;
 }
 
+// 请求目录列表，并把响应正文解析成当前目录和文件项数组。
 bool CommandClient::List(const std::string& path, std::string& cwd, std::vector<FileEntry>& items, std::string& error) {
     std::string body;
     if (!Call(Cmd::List, {{"path", path}}, Cmd::ListResult, body, error)) {
@@ -172,21 +187,25 @@ bool CommandClient::List(const std::string& path, std::string& cwd, std::vector<
     return true;
 }
 
+// 请求服务端创建目录。
 bool CommandClient::MakeDir(const std::string& path, std::string& error) {
     std::string body;
     return Call(Cmd::MakeDir, {{"path", path}}, Cmd::Ok, body, error);
 }
 
+// 请求服务端删除文件或目录。
 bool CommandClient::Remove(const std::string& path, std::string& error) {
     std::string body;
     return Call(Cmd::Remove, {{"path", path}}, Cmd::Ok, body, error);
 }
 
+// 请求服务端重命名文件或目录。
 bool CommandClient::Rename(const std::string& path, const std::string& newName, std::string& error) {
     std::string body;
     return Call(Cmd::Rename, {{"path", path}, {"new_name", newName}}, Cmd::Ok, body, error);
 }
 
+// 控制连接上的统一 RPC 调用：发一个请求，等一个响应。
 bool CommandClient::Call(Cmd cmd, const std::map<std::string, std::string>& request, Cmd expected, std::string& body,
                          std::string& error) {
     if (sock_ == INVALID_SOCKET) {
@@ -208,6 +227,7 @@ bool CommandClient::Call(Cmd cmd, const std::map<std::string, std::string>& requ
     return true;
 }
 
+// 单次上传实现：先协商断点偏移，再分块发送，最后校验 SHA-256。
 TransferResult UploadFileSync(const ConnectionInfo& connection, const std::filesystem::path& localPath,
                               const std::string& remotePath, ProgressCallback onProgress) {
     std::error_code ec;
@@ -297,6 +317,7 @@ TransferResult UploadFileSync(const ConnectionInfo& connection, const std::files
     return MakeResult(TransferOutcome::Success);
 }
 
+// 单次下载实现：先协商断点偏移，再分块接收，最后校验 SHA-256。
 TransferResult DownloadFileSync(const ConnectionInfo& connection, const std::string& remotePath,
                                 const std::filesystem::path& localPath, ProgressCallback onProgress) {
     if (!localPath.parent_path().empty()) {
