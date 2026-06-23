@@ -2,6 +2,9 @@
 
 #include "platform/win32_util.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <commctrl.h>
 #include <windowsx.h>
 
 namespace fds::serverapp {
@@ -21,9 +24,19 @@ constexpr int IDC_USER_DELETE = 1014;
 constexpr int IDC_USER_NEW = 1015;
 constexpr int IDC_HOME_HINT = 1016;
 constexpr int IDC_PERM_BASE = 1100;
+constexpr int IDC_DIR_PATH = 1201;
+constexpr int IDC_DIR_INPUT = 1202;
+constexpr int IDC_DIR_LIST = 1203;
+constexpr int IDC_DIR_UP = 1204;
+constexpr int IDC_DIR_REFRESH = 1205;
+constexpr int IDC_DIR_MAKE = 1206;
+constexpr int IDC_DIR_RENAME = 1207;
+constexpr int IDC_DIR_DELETE = 1208;
+constexpr int IDC_TRANSFERS = 1209;
 
 constexpr UINT_PTR kRefreshTimerId = 1;
-
+constexpr int kBaseWidth = 1280;
+constexpr int kBaseHeight = 860;
 constexpr int kAreaCount = 4;
 constexpr int kPermCount = 4;
 
@@ -52,6 +65,13 @@ std::string TrimUserName(const std::wstring& text) {
     return Trim(WideToUtf8(text));
 }
 
+std::string JoinVirtualPath(const std::string& base, const std::string& name) {
+    if (base == "/") {
+        return NormalizeVirtualPath("/" + name);
+    }
+    return NormalizeVirtualPath(base + "/" + name);
+}
+
 }  // namespace
 
 ServerWindow::ServerWindow(HINSTANCE instance) : instance_(instance) {}
@@ -65,6 +85,14 @@ ServerWindow::~ServerWindow() {
     }
 }
 
+HWND ServerWindow::Place(HWND hwnd, int x, int y, int w, int h) {
+    if (!hwnd) {
+        return nullptr;
+    }
+    layoutItems_.push_back({hwnd, RECT{x, y, x + w, y + h}});
+    return hwnd;
+}
+
 int ServerWindow::Run(int showCmd) {
     WNDCLASSW windowClass{};
     windowClass.lpfnWndProc = &ServerWindow::WndProc;
@@ -75,7 +103,7 @@ int ServerWindow::Run(int showCmd) {
     RegisterClassW(&windowClass);
 
     hwnd_ = CreateWindowW(windowClass.lpszClassName, L"FDS 服务端", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-                          1120, 760, nullptr, nullptr, instance_, this);
+                          kBaseWidth, kBaseHeight, nullptr, nullptr, instance_, this);
     ShowWindow(hwnd_, showCmd);
     UpdateWindow(hwnd_);
 
@@ -88,103 +116,266 @@ int ServerWindow::Run(int showCmd) {
 }
 
 void ServerWindow::BuildUi() {
-    uiFont_ = CreateFontW(-18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+    uiFont_ = CreateFontW(-20, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                           CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"SimSun");
-    titleFont_ = CreateFontW(-24, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+    titleFont_ = CreateFontW(-28, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                              CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"SimSun");
 
-    auto createText = [&](const wchar_t* text, int x, int y, int w, int h, HFONT font = nullptr, DWORD style = 0,
+    auto makeStatic = [&](const wchar_t* text, int x, int y, int w, int h, HFONT font = nullptr, DWORD style = 0,
                           int id = 0) {
-        HWND ctrl = CreateWindowW(L"STATIC", text, WS_CHILD | WS_VISIBLE | style, x, y, w, h, hwnd_,
-                                  id ? reinterpret_cast<HMENU>(id) : nullptr, instance_, nullptr);
+        HWND ctrl = Place(CreateWindowW(L"STATIC", text, WS_CHILD | WS_VISIBLE | style, x, y, w, h, hwnd_,
+                                        id ? reinterpret_cast<HMENU>(id) : nullptr, instance_, nullptr),
+                          x, y, w, h);
         SendMessageW(ctrl, WM_SETFONT, reinterpret_cast<WPARAM>(font ? font : uiFont_), TRUE);
         return ctrl;
     };
-    auto createLine = [&](int x, int y, int w) {
-        CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_ETCHEDHORZ, x, y, w, 1, hwnd_, nullptr, instance_,
-                      nullptr);
+    auto makeLine = [&](int x, int y, int w) {
+        return Place(CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_ETCHEDHORZ, x, y, w, 1, hwnd_, nullptr,
+                                   instance_, nullptr),
+                     x, y, w, 1);
     };
-    auto createEdit = [&](const wchar_t* text, int x, int y, int w, int h, int id, DWORD extraStyle = 0) {
-        HWND ctrl = CreateWindowW(L"EDIT", text, WS_CHILD | WS_VISIBLE | WS_BORDER | extraStyle, x, y, w, h, hwnd_,
-                                  reinterpret_cast<HMENU>(id), instance_, nullptr);
+    auto makeEdit = [&](const wchar_t* text, int x, int y, int w, int h, int id, DWORD style = 0) {
+        HWND ctrl = Place(CreateWindowW(L"EDIT", text, WS_CHILD | WS_VISIBLE | WS_BORDER | style, x, y, w, h, hwnd_,
+                                        reinterpret_cast<HMENU>(id), instance_, nullptr),
+                          x, y, w, h);
         SendMessageW(ctrl, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
         return ctrl;
     };
-    auto createButton = [&](const wchar_t* text, int x, int y, int w, int h, int id, DWORD extraStyle = 0) {
-        HWND ctrl = CreateWindowW(L"BUTTON", text, WS_CHILD | WS_VISIBLE | extraStyle, x, y, w, h, hwnd_,
-                                  reinterpret_cast<HMENU>(id), instance_, nullptr);
+    auto makeButton = [&](const wchar_t* text, int x, int y, int w, int h, int id, DWORD style = 0) {
+        HWND ctrl = Place(CreateWindowW(L"BUTTON", text, WS_CHILD | WS_VISIBLE | style, x, y, w, h, hwnd_,
+                                        reinterpret_cast<HMENU>(id), instance_, nullptr),
+                          x, y, w, h);
         SendMessageW(ctrl, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
         return ctrl;
     };
 
-    createText(L"服务", 32, 24, 70, 30, titleFont_);
-    createLine(104, 40, 960);
-    createText(L"端口", 40, 76, 60, 22);
-    portEdit_ = createEdit(L"9527", 40, 104, 150, 32, IDC_PORT);
-    startBtn_ = createButton(L"启动服务", 210, 104, 120, 34, IDC_START, BS_PUSHBUTTON);
-    createText(L"状态", 366, 76, 60, 22);
-    status_ = createText(L"", 366, 106, 680, 24, nullptr, 0, IDC_STATUS);
+    makeStatic(L"服务", 32, 24, 80, 34, titleFont_);
+    makeLine(120, 42, 1118);
+    makeStatic(L"端口", 40, 78, 70, 24);
+    portEdit_ = makeEdit(L"9527", 40, 108, 180, 36, IDC_PORT);
+    startBtn_ = makeButton(L"启动服务", 240, 108, 128, 38, IDC_START);
+    makeStatic(L"状态", 404, 78, 70, 24);
+    status_ = makeStatic(L"", 404, 112, 820, 28, nullptr, 0, IDC_STATUS);
 
-    createText(L"用户", 32, 172, 70, 30, titleFont_);
-    createLine(104, 188, 230);
-    userList_ = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL, 40, 218, 276,
-                              386, hwnd_, reinterpret_cast<HMENU>(IDC_USER_LIST), instance_, nullptr);
+    makeStatic(L"用户", 32, 182, 80, 34, titleFont_);
+    makeLine(120, 198, 186);
+    userList_ = Place(CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL, 40, 224,
+                                    266, 370, hwnd_, reinterpret_cast<HMENU>(IDC_USER_LIST), instance_, nullptr),
+                      40, 224, 266, 370);
     SendMessageW(userList_, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
-    newBtn_ = createButton(L"新建", 40, 622, 128, 34, IDC_USER_NEW, BS_PUSHBUTTON);
-    deleteBtn_ = createButton(L"删除", 188, 622, 128, 34, IDC_USER_DELETE, BS_PUSHBUTTON);
+    newBtn_ = makeButton(L"新建", 40, 614, 126, 38, IDC_USER_NEW);
+    deleteBtn_ = makeButton(L"删除", 180, 614, 126, 38, IDC_USER_DELETE);
 
-    createText(L"信息", 360, 172, 70, 30, titleFont_);
-    createLine(432, 188, 632);
+    makeStatic(L"信息", 334, 182, 80, 34, titleFont_);
+    makeLine(420, 198, 230);
+    makeStatic(L"用户名", 334, 224, 90, 24);
+    userName_ = makeEdit(L"", 334, 254, 260, 36, IDC_USER_NAME);
+    makeStatic(L"密码", 334, 306, 90, 24);
+    userPass_ = makeEdit(L"", 334, 336, 260, 36, IDC_USER_PASS, ES_PASSWORD);
+    userEnabled_ = makeButton(L"启用", 334, 392, 92, 28, IDC_USER_ENABLED, BS_AUTOCHECKBOX);
+    userAdmin_ = makeButton(L"管理员", 442, 392, 118, 28, IDC_USER_ADMIN, BS_AUTOCHECKBOX);
+    makeStatic(L"主目录", 334, 442, 90, 24);
+    homeHint_ = makeStatic(L"", 334, 472, 300, 28, nullptr, 0, IDC_HOME_HINT);
+    makeStatic(L"权限", 334, 520, 80, 34, titleFont_);
+    makeLine(420, 536, 230);
 
-    createText(L"用户名", 360, 218, 90, 22);
-    userName_ = createEdit(L"", 360, 246, 240, 32, IDC_USER_NAME);
-    createText(L"密码", 636, 218, 90, 22);
-    userPass_ = createEdit(L"", 636, 246, 240, 32, IDC_USER_PASS, ES_PASSWORD);
-
-    userEnabled_ = createButton(L"启用", 360, 298, 80, 24, IDC_USER_ENABLED, BS_AUTOCHECKBOX);
-    userAdmin_ = createButton(L"管理员", 470, 298, 100, 24, IDC_USER_ADMIN, BS_AUTOCHECKBOX);
-
-    createText(L"主目录", 360, 344, 90, 22);
-    homeHint_ = createText(L"", 360, 372, 520, 24, nullptr, 0, IDC_HOME_HINT);
-
-    createText(L"权限", 360, 430, 70, 30, titleFont_);
-    createLine(432, 446, 632);
-
-    const int gridLeft = 360;
-    const int headerTop = 478;
-    const int rowTop = 510;
-    const int rowHeight = 48;
-    const int labelWidth = 110;
-    const int buttonWidth = 58;
-    const int buttonGap = 16;
-
+    const int permHeaderY = 566;
+    const int permRowY = 600;
+    const int permLabelWidth = 108;
+    const int permButtonWidth = 54;
+    const int permGap = 10;
     for (int perm = 0; perm < kPermCount; ++perm) {
-        const int x = gridLeft + labelWidth + perm * (buttonWidth + buttonGap);
-        createText(kPermLabels[perm], x, headerTop, buttonWidth, 22, nullptr, SS_CENTER);
+        const int x = 334 + permLabelWidth + perm * (permButtonWidth + permGap);
+        makeStatic(kPermLabels[perm], x, permHeaderY, permButtonWidth, 22, nullptr, SS_CENTER);
     }
-
     for (int area = 0; area < kAreaCount; ++area) {
-        const int y = rowTop + area * rowHeight;
-        createText(kAreaLabels[area], gridLeft, y + 6, labelWidth, 24);
+        const int y = permRowY + area * 42;
+        makeStatic(kAreaLabels[area], 334, y + 4, permLabelWidth, 24);
         for (int perm = 0; perm < kPermCount; ++perm) {
-            const int x = gridLeft + labelWidth + perm * (buttonWidth + buttonGap);
+            const int x = 334 + permLabelWidth + perm * (permButtonWidth + permGap);
             permissionButtons_[area][perm] =
-                createButton(kPermLabels[perm], x, y, buttonWidth, 30, IDC_PERM_BASE + area * kPermCount + perm,
-                             BS_AUTOCHECKBOX | BS_PUSHLIKE | WS_TABSTOP);
+                makeButton(kPermLabels[perm], x, y, permButtonWidth, 28, IDC_PERM_BASE + area * kPermCount + perm,
+                           BS_AUTOCHECKBOX | BS_PUSHLIKE);
         }
     }
+    saveBtn_ = makeButton(L"保存", 334, 778, 126, 38, IDC_USER_SAVE);
 
-    saveBtn_ = createButton(L"保存", 360, 622, 140, 36, IDC_USER_SAVE, BS_PUSHBUTTON);
+    makeStatic(L"目录", 680, 182, 80, 34, titleFont_);
+    makeLine(766, 198, 472);
+    makeStatic(L"路径", 680, 224, 70, 24);
+    dirPath_ = makeEdit(L"/", 680, 254, 430, 36, IDC_DIR_PATH, ES_READONLY);
+    dirUpBtn_ = makeButton(L"上级", 1124, 254, 54, 36, IDC_DIR_UP);
+    dirRefreshBtn_ = makeButton(L"刷新", 1188, 254, 54, 36, IDC_DIR_REFRESH);
+
+    dirList_ = Place(CreateWindowW(WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LVS_REPORT | LVS_SINGLESEL,
+                                   680, 310, 562, 284, hwnd_, reinterpret_cast<HMENU>(IDC_DIR_LIST), instance_, nullptr),
+                     680, 310, 562, 284);
+    SendMessageW(dirList_, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
+    ListView_SetExtendedListViewStyle(dirList_, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+    win32::AddColumn(dirList_, 0, 170, L"名称");
+    win32::AddColumn(dirList_, 1, 70, L"类型");
+    win32::AddColumn(dirList_, 2, 90, L"大小");
+    win32::AddColumn(dirList_, 3, 140, L"修改时间");
+    win32::AddColumn(dirList_, 4, 120, L"路径");
+
+    makeStatic(L"名称", 680, 614, 70, 24);
+    dirInput_ = makeEdit(L"", 680, 644, 240, 36, IDC_DIR_INPUT);
+    dirMakeBtn_ = makeButton(L"新建", 936, 644, 92, 36, IDC_DIR_MAKE);
+    dirRenameBtn_ = makeButton(L"重命名", 1042, 644, 92, 36, IDC_DIR_RENAME);
+    dirDeleteBtn_ = makeButton(L"删除", 1148, 644, 94, 36, IDC_DIR_DELETE);
+
+    makeStatic(L"传输", 32, 694, 80, 34, titleFont_);
+    makeLine(120, 710, 1118);
+    transferList_ =
+        Place(CreateWindowW(WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LVS_REPORT | LVS_SINGLESEL, 40, 736,
+                            1202, 80, hwnd_, reinterpret_cast<HMENU>(IDC_TRANSFERS), instance_, nullptr),
+              40, 736, 1202, 80);
+    SendMessageW(transferList_, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
+    ListView_SetExtendedListViewStyle(transferList_, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+    win32::AddColumn(transferList_, 0, 60, L"ID");
+    win32::AddColumn(transferList_, 1, 100, L"用户");
+    win32::AddColumn(transferList_, 2, 80, L"类型");
+    win32::AddColumn(transferList_, 3, 300, L"路径");
+    win32::AddColumn(transferList_, 4, 160, L"进度");
+    win32::AddColumn(transferList_, 5, 100, L"状态");
+    win32::AddColumn(transferList_, 6, 220, L"说明");
+    win32::AddColumn(transferList_, 7, 130, L"更新时间");
 
     CreateNewUser();
     ReloadUsers();
     RefreshStatus();
-    SetTimer(hwnd_, kRefreshTimerId, 1000, nullptr);
+    RefreshDirectory();
+    RefreshTransfers();
+    LayoutControls();
+    SetTimer(hwnd_, kRefreshTimerId, 800, nullptr);
+}
+
+void ServerWindow::LayoutControls() {
+    RECT client{};
+    GetClientRect(hwnd_, &client);
+    const double scaleX = std::max(0.4, static_cast<double>(client.right) / static_cast<double>(kBaseWidth));
+    const double scaleY = std::max(0.4, static_cast<double>(client.bottom) / static_cast<double>(kBaseHeight));
+
+    for (const auto& item : layoutItems_) {
+        const int x = static_cast<int>(std::lround(item.rect.left * scaleX));
+        const int y = static_cast<int>(std::lround(item.rect.top * scaleY));
+        const int w = std::max(1, static_cast<int>(std::lround((item.rect.right - item.rect.left) * scaleX)));
+        const int h = std::max(1, static_cast<int>(std::lround((item.rect.bottom - item.rect.top) * scaleY)));
+        MoveWindow(item.hwnd, x, y, w, h, TRUE);
+    }
+
+    ResizeListColumns();
+}
+
+void ServerWindow::ResizeListColumns() {
+    RECT rc{};
+    GetClientRect(dirList_, &rc);
+    const int dirWidth = std::max(420L, rc.right - rc.left);
+    ListView_SetColumnWidth(dirList_, 0, static_cast<int>(dirWidth * 0.24));
+    ListView_SetColumnWidth(dirList_, 1, static_cast<int>(dirWidth * 0.12));
+    ListView_SetColumnWidth(dirList_, 2, static_cast<int>(dirWidth * 0.14));
+    ListView_SetColumnWidth(dirList_, 3, static_cast<int>(dirWidth * 0.25));
+    ListView_SetColumnWidth(dirList_, 4, std::max(90, dirWidth - static_cast<int>(dirWidth * 0.75)));
+
+    GetClientRect(transferList_, &rc);
+    const int transferWidth = std::max(900L, rc.right - rc.left);
+    ListView_SetColumnWidth(transferList_, 0, 60);
+    ListView_SetColumnWidth(transferList_, 1, 100);
+    ListView_SetColumnWidth(transferList_, 2, 80);
+    ListView_SetColumnWidth(transferList_, 3, static_cast<int>(transferWidth * 0.27));
+    ListView_SetColumnWidth(transferList_, 4, static_cast<int>(transferWidth * 0.14));
+    ListView_SetColumnWidth(transferList_, 5, 90);
+    ListView_SetColumnWidth(transferList_, 6, static_cast<int>(transferWidth * 0.22));
+    ListView_SetColumnWidth(transferList_, 7, static_cast<int>(transferWidth * 0.12));
 }
 
 void ServerWindow::RefreshStatus() {
     win32::SetText(status_, core_.StatusText());
     SetWindowTextW(startBtn_, core_.IsRunning() ? L"停止服务" : L"启动服务");
+}
+
+void ServerWindow::RefreshTransfers() {
+    const auto transfers = core_.SnapshotTransfers();
+    ListView_DeleteAllItems(transferList_);
+
+    for (int i = 0; i < static_cast<int>(transfers.size()); ++i) {
+        const auto& item = transfers[i];
+        LVITEMW row{};
+        row.mask = LVIF_TEXT;
+        row.iItem = i;
+        auto id = Utf8ToWide(std::to_string(item.id));
+        row.pszText = id.data();
+        ListView_InsertItem(transferList_, &row);
+
+        auto user = Utf8ToWide(item.username);
+        auto direction = Utf8ToWide(item.direction);
+        auto path = Utf8ToWide(item.path);
+        const std::string totalText = item.total == 0 ? "-" : FormatBytes(item.total);
+        auto progress = Utf8ToWide(FormatBytes(item.done)) + L" / " + Utf8ToWide(totalText);
+        auto status = Utf8ToWide(item.status);
+        auto detail = Utf8ToWide(item.detail);
+        auto updatedAt = Utf8ToWide(item.updatedAt);
+
+        ListView_SetItemText(transferList_, i, 1, user.data());
+        ListView_SetItemText(transferList_, i, 2, direction.data());
+        ListView_SetItemText(transferList_, i, 3, path.data());
+        ListView_SetItemText(transferList_, i, 4, progress.data());
+        ListView_SetItemText(transferList_, i, 5, status.data());
+        ListView_SetItemText(transferList_, i, 6, detail.data());
+        ListView_SetItemText(transferList_, i, 7, updatedAt.data());
+    }
+}
+
+void ServerWindow::RefreshDirectory(const std::wstring& preferredSelection) {
+    std::wstring target = preferredSelection;
+    if (target.empty()) {
+        const int selected = ListView_GetNextItem(dirList_, -1, LVNI_SELECTED);
+        if (selected >= 0 && selected < static_cast<int>(dirEntries_.size())) {
+            target = Utf8ToWide(dirEntries_[selected].name);
+        }
+    }
+
+    std::string cwd;
+    std::string error;
+    auto entries = core_.SnapshotAdminDirectory(CurrentDirPath(), cwd, error);
+    if (!error.empty()) {
+        AlertUser(Utf8ToWide(error));
+        return;
+    }
+
+    dirEntries_ = std::move(entries);
+    win32::SetText(dirPath_, Utf8ToWide(cwd));
+    ListView_DeleteAllItems(dirList_);
+
+    int selectedIndex = -1;
+    for (int i = 0; i < static_cast<int>(dirEntries_.size()); ++i) {
+        const auto& entry = dirEntries_[i];
+        LVITEMW row{};
+        row.mask = LVIF_TEXT;
+        row.iItem = i;
+
+        auto name = Utf8ToWide(entry.name);
+        row.pszText = name.data();
+        ListView_InsertItem(dirList_, &row);
+
+        auto type = std::wstring(entry.isDir ? L"目录" : L"文件");
+        auto size = Utf8ToWide(entry.isDir ? "-" : FormatBytes(entry.size));
+        auto time = Utf8ToWide(entry.mtime);
+        auto path = Utf8ToWide(entry.path);
+
+        ListView_SetItemText(dirList_, i, 1, type.data());
+        ListView_SetItemText(dirList_, i, 2, size.data());
+        ListView_SetItemText(dirList_, i, 3, time.data());
+        ListView_SetItemText(dirList_, i, 4, path.data());
+
+        if (!target.empty() && target == name) {
+            selectedIndex = i;
+        }
+    }
+
+    if (selectedIndex >= 0) {
+        ListView_SetItemState(dirList_, selectedIndex, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+    }
 }
 
 void ServerWindow::ReloadUsers(const std::wstring& preferredName) {
@@ -457,6 +648,90 @@ std::string ServerWindow::BuildRuleSpec(const std::string& username, bool admin)
     return spec.str();
 }
 
+std::string ServerWindow::CurrentDirPath() const {
+    const auto path = WideToUtf8(win32::GetText(dirPath_));
+    return path.empty() ? "/" : path;
+}
+
+std::optional<FileEntry> ServerWindow::SelectedDirectoryEntry() const {
+    const int index = ListView_GetNextItem(dirList_, -1, LVNI_SELECTED);
+    if (index < 0 || index >= static_cast<int>(dirEntries_.size())) {
+        return std::nullopt;
+    }
+    return dirEntries_[index];
+}
+
+void ServerWindow::DirectoryUp() {
+    const auto current = NormalizeVirtualPath(CurrentDirPath());
+    if (current.empty() || current == "/") {
+        return;
+    }
+
+    const auto pos = current.find_last_of('/');
+    const auto parent = pos <= 0 ? "/" : current.substr(0, pos);
+    win32::SetText(dirPath_, Utf8ToWide(parent));
+    RefreshDirectory();
+}
+
+void ServerWindow::DirectoryMake() {
+    const auto name = Trim(WideToUtf8(win32::GetText(dirInput_)));
+    if (name.empty()) {
+        AlertUser(L"请输入目录名称");
+        return;
+    }
+
+    std::string error;
+    if (!core_.AdminMakeDir(JoinVirtualPath(CurrentDirPath(), name), error)) {
+        AlertUser(Utf8ToWide(error));
+        return;
+    }
+    RefreshDirectory(Utf8ToWide(name));
+}
+
+void ServerWindow::DirectoryRename() {
+    const auto selected = SelectedDirectoryEntry();
+    if (!selected) {
+        AlertUser(L"请先选择文件或目录");
+        return;
+    }
+
+    const auto newName = Trim(WideToUtf8(win32::GetText(dirInput_)));
+    if (newName.empty()) {
+        AlertUser(L"请输入新名称");
+        return;
+    }
+
+    std::string error;
+    if (!core_.AdminRename(selected->path, newName, error)) {
+        AlertUser(Utf8ToWide(error));
+        return;
+    }
+    RefreshDirectory(Utf8ToWide(newName));
+}
+
+void ServerWindow::DirectoryDelete() {
+    const auto selected = SelectedDirectoryEntry();
+    if (!selected) {
+        AlertUser(L"请先选择文件或目录");
+        return;
+    }
+
+    std::string error;
+    if (!core_.AdminRemove(selected->path, error)) {
+        AlertUser(Utf8ToWide(error));
+        return;
+    }
+    RefreshDirectory();
+}
+
+void ServerWindow::OpenSelectedDirectory() {
+    const auto selected = SelectedDirectoryEntry();
+    if (selected && selected->isDir) {
+        win32::SetText(dirPath_, Utf8ToWide(selected->path));
+        RefreshDirectory();
+    }
+}
+
 void ServerWindow::AlertUser(const std::wstring& text) const {
     win32::Alert(hwnd_, L"FDS 服务端", text);
 }
@@ -480,28 +755,36 @@ LRESULT CALLBACK ServerWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
         case WM_CREATE:
             self->BuildUi();
             return 0;
+        case WM_SIZE:
+            self->LayoutControls();
+            return 0;
         case WM_CTLCOLORSTATIC: {
             HDC hdc = reinterpret_cast<HDC>(wParam);
             HWND control = reinterpret_cast<HWND>(lParam);
             SetBkMode(hdc, TRANSPARENT);
-            if (control == self->status_ || control == self->homeHint_) {
-                SetTextColor(hdc, RGB(90, 90, 90));
-            } else {
-                SetTextColor(hdc, RGB(32, 32, 32));
-            }
+            SetTextColor(hdc, (control == self->status_ || control == self->homeHint_) ? RGB(48, 48, 48)
+                                                                                       : RGB(18, 18, 18));
             return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
         }
         case WM_CTLCOLORBTN: {
             HDC hdc = reinterpret_cast<HDC>(wParam);
             SetBkMode(hdc, TRANSPARENT);
-            SetTextColor(hdc, RGB(32, 32, 32));
+            SetTextColor(hdc, RGB(18, 18, 18));
             return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
         }
         case WM_TIMER:
             if (wParam == kRefreshTimerId) {
                 self->RefreshStatus();
+                self->RefreshTransfers();
             }
             return 0;
+        case WM_NOTIFY: {
+            const auto* header = reinterpret_cast<LPNMHDR>(lParam);
+            if (header->idFrom == IDC_DIR_LIST && header->code == NM_DBLCLK) {
+                self->OpenSelectedDirectory();
+            }
+            return 0;
+        }
         case WM_COMMAND:
             switch (LOWORD(wParam)) {
                 case IDC_START:
@@ -515,6 +798,21 @@ LRESULT CALLBACK ServerWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
                     return 0;
                 case IDC_USER_DELETE:
                     self->RemoveUser();
+                    return 0;
+                case IDC_DIR_UP:
+                    self->DirectoryUp();
+                    return 0;
+                case IDC_DIR_REFRESH:
+                    self->RefreshDirectory();
+                    return 0;
+                case IDC_DIR_MAKE:
+                    self->DirectoryMake();
+                    return 0;
+                case IDC_DIR_RENAME:
+                    self->DirectoryRename();
+                    return 0;
+                case IDC_DIR_DELETE:
+                    self->DirectoryDelete();
                     return 0;
                 case IDC_USER_LIST:
                     if (HIWORD(wParam) == LBN_SELCHANGE) {

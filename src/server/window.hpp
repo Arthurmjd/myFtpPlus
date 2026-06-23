@@ -14,8 +14,18 @@ public:
     int Run(int showCmd);
 
 private:
+    struct LayoutItem {
+        HWND hwnd{};
+        RECT rect{};
+    };
+
+    HWND Place(HWND hwnd, int x, int y, int w, int h);
     void BuildUi();
+    void LayoutControls();
+    void ResizeListColumns();
     void RefreshStatus();
+    void RefreshTransfers();
+    void RefreshDirectory(const std::wstring& preferredSelection = L"");
     void ReloadUsers(const std::wstring& preferredName = L"");
     void ClearUserFields();
     void ApplyUser(const UserRecord& user);
@@ -29,6 +39,13 @@ private:
     void SetPermissionDefaults();
     std::string SuggestedHome(const std::string& username, bool admin) const;
     std::string BuildRuleSpec(const std::string& username, bool admin) const;
+    std::string CurrentDirPath() const;
+    std::optional<FileEntry> SelectedDirectoryEntry() const;
+    void DirectoryUp();
+    void DirectoryMake();
+    void DirectoryRename();
+    void DirectoryDelete();
+    void OpenSelectedDirectory();
     void AlertUser(const std::wstring& text) const;
 
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -38,9 +55,12 @@ private:
     HFONT uiFont_{};
     HFONT titleFont_{};
 
+    std::vector<LayoutItem> layoutItems_;
+
     HWND status_{};
     HWND portEdit_{};
     HWND startBtn_{};
+
     HWND userList_{};
     HWND userName_{};
     HWND userPass_{};
@@ -50,7 +70,19 @@ private:
     HWND newBtn_{};
     HWND saveBtn_{};
     HWND deleteBtn_{};
+
+    HWND dirPath_{};
+    HWND dirInput_{};
+    HWND dirList_{};
+    HWND dirUpBtn_{};
+    HWND dirRefreshBtn_{};
+    HWND dirMakeBtn_{};
+    HWND dirRenameBtn_{};
+    HWND dirDeleteBtn_{};
+    HWND transferList_{};
+
     std::array<std::array<HWND, 4>, 4> permissionButtons_{};
+    std::vector<FileEntry> dirEntries_;
     ServerCore core_;
 };
 

@@ -60,6 +60,10 @@ bool IsValidUserName(const std::string& username) {
     return username.find_first_of("\\/\t\r\n") == std::string::npos;
 }
 
+std::uint64_t ParseU64(const std::string& value) {
+    return value.empty() ? 0 : std::strtoull(value.c_str(), nullptr, 10);
+}
+
 }  // namespace
 
 ServerCore::ServerCore()
@@ -126,12 +130,10 @@ std::wstring ServerCore::StatusText() const {
     }
 
     std::ostringstream out;
-    out << "端口: " << port_ << "  连接: " << activeClients_.load() << "  传输线程: " << activeTransfers_.load()
-        << "  服务: " << (running_ ? "运行中" : "已停止") << "  用户存储: ";
-    if (storageError.empty()) {
-        out << "SQLite";
-    } else {
-        out << "SQLite 异常 - " << storageError;
+    out << (running_ ? "运行中" : "已停止") << "  端口 " << port_ << "  连接 " << activeClients_.load() << "  传输 "
+        << activeTransfers_.load();
+    if (!storageError.empty()) {
+        out << "  存储异常";
     }
     return Utf8ToWide(out.str());
 }
@@ -149,11 +151,93 @@ std::vector<UserRecord> ServerCore::SnapshotUsers() {
     return snapshot;
 }
 
+std::vector<FileEntry> ServerCore::SnapshotAdminDirectory(const std::string& path, std::string& cwd,
+                                                          std::string& error) const {
+    const auto resolved = ResolveAdminPath(path);
+    if (!resolved) {
+        error = "目录不可访问";
+        return {};
+    }
+
+    std::error_code ec;
+    if (!std::filesystem::is_directory(resolved->real, ec)) {
+        error = "目标不是目录";
+        return {};
+    }
+
+    cwd = resolved->virtualPath;
+    return EnumerateDirectory(resolved->real, resolved->virtualPath);
+}
+
+bool ServerCore::AdminMakeDir(const std::string& path, std::string& error) {
+    const auto resolved = ResolveAdminPath(path, true);
+    if (!resolved) {
+        error = "目录不可创建";
+        return false;
+    }
+
+    std::error_code ec;
+    std::filesystem::create_directories(resolved->real, ec);
+    if (ec) {
+        error = "创建目录失败";
+        return false;
+    }
+    return true;
+}
+
+bool ServerCore::AdminRemove(const std::string& path, std::string& error) {
+    const auto resolved = ResolveAdminPath(path);
+    if (!resolved || resolved->virtualPath == "/") {
+        error = "目标不可删除";
+        return false;
+    }
+
+    std::error_code ec;
+    std::filesystem::remove_all(resolved->real, ec);
+    if (ec) {
+        error = "删除失败";
+        return false;
+    }
+    return true;
+}
+
+bool ServerCore::AdminRename(const std::string& path, const std::string& newName, std::string& error) {
+    auto cleanName = Trim(newName);
+    if (cleanName.empty() || cleanName.find('/') != std::string::npos || cleanName.find('\\') != std::string::npos) {
+        error = "新名称无效";
+        return false;
+    }
+
+    const auto resolved = ResolveAdminPath(path);
+    if (!resolved || resolved->virtualPath == "/") {
+        error = "目标不可重命名";
+        return false;
+    }
+
+    std::filesystem::path target = resolved->real.parent_path() / Utf8ToWide(cleanName);
+    std::error_code ec;
+    std::filesystem::rename(resolved->real, target, ec);
+    if (ec) {
+        error = "重命名失败";
+        return false;
+    }
+    return true;
+}
+
+std::vector<TransferSnapshot> ServerCore::SnapshotTransfers() const {
+    std::lock_guard lock(transferMu_);
+    auto snapshot = transfers_;
+    std::sort(snapshot.begin(), snapshot.end(), [](const TransferSnapshot& a, const TransferSnapshot& b) {
+        return a.id > b.id;
+    });
+    return snapshot;
+}
+
 bool ServerCore::UpsertUser(const UserRecord& input, const std::string& plainPassword, std::string& error) {
     auto user = input;
     user.username = Trim(user.username);
     if (!IsValidUserName(user.username)) {
-        error = "用户名不能为空，且不能包含斜杠或特殊路径";
+        error = "用户名不能为空，且不能包含斜杠或非法路径";
         return false;
     }
     if (user.home.empty() || NormalizeVirtualPath(user.home).empty()) {
@@ -271,6 +355,22 @@ bool ServerCore::SaveUsersLocked(std::string& error) {
     return true;
 }
 
+std::optional<ServerCore::ResolvedPath> ServerCore::ResolveAdminPath(const std::string& rawPath,
+                                                                     bool allowMissing) const {
+    const auto cleanPath = NormalizeVirtualPath(rawPath.empty() ? "/" : rawPath);
+    if (cleanPath.empty()) {
+        return std::nullopt;
+    }
+
+    const auto realPath = VirtualToReal(rootDir_, cleanPath);
+    std::error_code ec;
+    if (!allowMissing && !std::filesystem::exists(realPath, ec)) {
+        return std::nullopt;
+    }
+
+    return ResolvedPath{realPath, cleanPath};
+}
+
 std::optional<SessionInfo> ServerCore::FindSession(std::uint32_t sessionId) {
     std::lock_guard lock(mu_);
     const auto it = sessions_.find(sessionId);
@@ -297,6 +397,50 @@ std::optional<ServerCore::ResolvedPath> ServerCore::ResolvePath(const SessionInf
     }
 
     return ResolvedPath{realPath, cleanPath};
+}
+
+std::uint32_t ServerCore::StartTransfer(const std::string& username, const std::string& direction, const std::string& path,
+                                        std::uint64_t total) {
+    TransferSnapshot transfer;
+    transfer.id = nextTransfer_++;
+    transfer.username = username;
+    transfer.direction = direction;
+    transfer.path = path;
+    transfer.status = "运行中";
+    transfer.updatedAt = NowString();
+    transfer.total = total;
+
+    std::lock_guard lock(transferMu_);
+    transfers_.push_back(std::move(transfer));
+    if (transfers_.size() > 80) {
+        transfers_.erase(transfers_.begin(), transfers_.begin() + static_cast<std::ptrdiff_t>(transfers_.size() - 80));
+    }
+    return transfers_.back().id;
+}
+
+void ServerCore::UpdateTransfer(std::uint32_t id, std::uint64_t done, std::uint64_t total, const std::string& status,
+                                const std::string& detail) {
+    std::lock_guard lock(transferMu_);
+    for (auto& item : transfers_) {
+        if (item.id != id) {
+            continue;
+        }
+        item.done = done;
+        item.total = total;
+        if (!status.empty()) {
+            item.status = status;
+        }
+        if (!detail.empty()) {
+            item.detail = detail;
+        }
+        item.updatedAt = NowString();
+        return;
+    }
+}
+
+void ServerCore::FinishTransfer(std::uint32_t id, const std::string& status, const std::string& detail, std::uint64_t done,
+                                std::uint64_t total) {
+    UpdateTransfer(id, done, total, status, detail);
 }
 
 void ServerCore::ReplyError(SOCKET sock, const NetPacket& req, const std::string& message) {
@@ -656,13 +800,20 @@ void ServerCore::UploadWorker(SOCKET sock, const NetPacket& req) {
 
     std::error_code ec;
     std::uint64_t offset = std::filesystem::exists(resolved->real, ec) ? std::filesystem::file_size(resolved->real, ec) : 0;
+    const std::uint64_t requestedTotal = beginMeta.contains("size") ? ParseU64(beginMeta.at("size")) : 0;
+    const std::uint64_t total = std::max(requestedTotal, offset);
+
     std::ofstream out(resolved->real, std::ios::binary | std::ios::app);
     if (!out) {
         ReplyError(sock, req, "无法写入文件");
         return;
     }
 
+    const auto transferId = StartTransfer(session->username, "上传", resolved->virtualPath, total);
+    UpdateTransfer(transferId, offset, total);
+
     if (!SendPacket(sock, Cmd::UploadReady, req.seq, req.session, SerializePairs({{"offset", std::to_string(offset)}}))) {
+        FinishTransfer(transferId, "中断", "准备响应失败", offset, total);
         return;
     }
 
@@ -670,17 +821,25 @@ void ServerCore::UploadWorker(SOCKET sock, const NetPacket& req) {
     while (true) {
         NetPacket packet;
         if (!RecvPacket(sock, packet)) {
+            FinishTransfer(transferId, "中断", "连接断开", offset, total);
             return;
         }
 
         if (packet.cmd == Cmd::UploadData) {
             out.write(packet.body.data(), static_cast<std::streamsize>(packet.body.size()));
+            if (!out) {
+                ReplyError(sock, packet, "写入文件失败");
+                FinishTransfer(transferId, "失败", "写入文件失败", offset, total);
+                return;
+            }
             offset += static_cast<std::uint64_t>(packet.body.size());
+            UpdateTransfer(transferId, offset, std::max(total, offset));
             continue;
         }
 
         if (packet.cmd != Cmd::UploadEnd) {
             ReplyError(sock, packet, "上传命令顺序错误");
+            FinishTransfer(transferId, "失败", "命令顺序错误", offset, total);
             return;
         }
 
@@ -693,11 +852,17 @@ void ServerCore::UploadWorker(SOCKET sock, const NetPacket& req) {
         const auto finalHash = Sha256File(resolved->real);
         if (!expectedHash.empty() && finalHash != expectedHash) {
             ReplyError(sock, packet, "上传后校验失败");
+            FinishTransfer(transferId, "失败", "校验失败", offset, std::max(total, offset));
             return;
         }
 
-        SendPacket(sock, Cmd::UploadDone, packet.seq, packet.session,
-                   SerializePairs({{"size", std::to_string(offset)}, {"sha256", finalHash}}));
+        if (!SendPacket(sock, Cmd::UploadDone, packet.seq, packet.session,
+                        SerializePairs({{"size", std::to_string(offset)}, {"sha256", finalHash}}))) {
+            FinishTransfer(transferId, "中断", "完成响应失败", offset, std::max(total, offset));
+            return;
+        }
+
+        FinishTransfer(transferId, "完成", "校验通过", offset, std::max(total, offset));
         return;
     }
 }
@@ -730,20 +895,20 @@ void ServerCore::DownloadWorker(SOCKET sock, const NetPacket& req) {
         return;
     }
 
-    std::uint64_t offset = 0;
-    if (pairs.contains("offset")) {
-        offset = std::strtoull(pairs.at("offset").c_str(), nullptr, 10);
-    }
-
+    std::uint64_t offset = pairs.contains("offset") ? ParseU64(pairs.at("offset")) : 0;
     std::error_code ec;
     const auto total = std::filesystem::file_size(resolved->real, ec);
     if (offset > total) {
         offset = 0;
     }
 
+    const auto transferId = StartTransfer(session->username, "下载", resolved->virtualPath, total);
+    UpdateTransfer(transferId, offset, total);
+
     in.seekg(static_cast<std::streamoff>(offset));
     if (!SendPacket(sock, Cmd::DownloadMeta, req.seq, req.session,
                     SerializePairs({{"size", std::to_string(total)}, {"offset", std::to_string(offset)}}))) {
+        FinishTransfer(transferId, "中断", "元数据响应失败", offset, total);
         return;
     }
 
@@ -757,12 +922,21 @@ void ServerCore::DownloadWorker(SOCKET sock, const NetPacket& req) {
 
         if (!SendPacket(sock, Cmd::DownloadData, req.seq, req.session,
                         std::string(buffer.data(), static_cast<std::size_t>(got)))) {
+            FinishTransfer(transferId, "中断", "发送数据失败", offset, total);
             return;
         }
+
+        offset += static_cast<std::uint64_t>(got);
+        UpdateTransfer(transferId, offset, total);
     }
 
-    SendPacket(sock, Cmd::DownloadDone, req.seq, req.session,
-               SerializePairs({{"size", std::to_string(total)}, {"sha256", Sha256File(resolved->real)}}));
+    if (!SendPacket(sock, Cmd::DownloadDone, req.seq, req.session,
+                    SerializePairs({{"size", std::to_string(total)}, {"sha256", Sha256File(resolved->real)}}))) {
+        FinishTransfer(transferId, "中断", "完成响应失败", offset, total);
+        return;
+    }
+
+    FinishTransfer(transferId, "完成", "传输完成", offset, total);
 }
 
 void ServerCore::Loop() {

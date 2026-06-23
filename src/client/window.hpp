@@ -13,11 +13,19 @@ public:
     int Run(int showCmd);
 
 private:
+    struct LayoutItem {
+        HWND hwnd{};
+        RECT rect{};
+    };
+
     HWND Track(std::vector<HWND>& bucket, HWND hwnd);
+    HWND Place(HWND hwnd, int x, int y, int w, int h);
 
     void BuildUi();
     void BuildLoginView();
     void BuildClientView();
+    void LayoutControls();
+    void ResizeListColumns();
 
     void SetView(bool loggedIn);
     void SetStatus(const std::wstring& text);
@@ -87,6 +95,7 @@ private:
 
     std::vector<HWND> loginControls_;
     std::vector<HWND> clientControls_;
+    std::vector<LayoutItem> layoutItems_;
 
     FavoriteStore favorites_;
     CommandClient client_;
