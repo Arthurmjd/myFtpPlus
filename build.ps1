@@ -14,6 +14,7 @@ $commonFlags = @(
     "-fexec-charset=UTF-8",
     "-Wall",
     "-Wextra",
+    "-Wno-cast-function-type",
     "-O2",
     "-Isrc"
 )
@@ -36,6 +37,7 @@ function Invoke-Compile {
 $serverSources = @(
     "src/shared/common.cpp",
     "src/platform/win32_util.cpp",
+    "src/server/user_store.cpp",
     "src/server/core.cpp",
     "src/server/window.cpp",
     "src/server/main.cpp"
@@ -44,6 +46,7 @@ Invoke-Compile -Name "server" -Sources $serverSources -Output (Join-Path $bin "s
     "-lws2_32",
     "-lbcrypt",
     "-lcomdlg32",
+    "-lgdi32",
     "-lshell32",
     "-lole32"
 )

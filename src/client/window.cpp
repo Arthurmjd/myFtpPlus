@@ -205,12 +205,11 @@ void ClientWindow::BuildClientView() {
     ListView_SetExtendedListViewStyle(taskList_, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
     win32::AddColumn(taskList_, 0, 50, L"ID");
     win32::AddColumn(taskList_, 1, 70, L"类型");
-    win32::AddColumn(taskList_, 2, 260, L"本地路径");
-    win32::AddColumn(taskList_, 3, 260, L"远程路径");
-    win32::AddColumn(taskList_, 4, 110, L"进度");
-    win32::AddColumn(taskList_, 5, 90, L"速度");
-    win32::AddColumn(taskList_, 6, 90, L"状态");
-    win32::AddColumn(taskList_, 7, 170, L"说明");
+    win32::AddColumn(taskList_, 2, 280, L"本地路径");
+    win32::AddColumn(taskList_, 3, 280, L"远程路径");
+    win32::AddColumn(taskList_, 4, 150, L"进度");
+    win32::AddColumn(taskList_, 5, 100, L"状态");
+    win32::AddColumn(taskList_, 6, 170, L"说明");
 
     Track(clientControls_, CreateWindowW(L"BUTTON", L"暂停", WS_CHILD | WS_VISIBLE, 780, 676, 90, 28, hwnd_,
                                          reinterpret_cast<HMENU>(IDC_PAUSE), instance_, nullptr));
@@ -405,7 +404,6 @@ void ClientWindow::RefreshTasks() {
         auto local = task->local;
         auto remote = Utf8ToWide(task->remote);
         auto progress = Utf8ToWide(FormatBytes(task->done.load())) + L" / " + Utf8ToWide(FormatBytes(task->total.load()));
-        auto speed = Utf8ToWide(FormatBytes(static_cast<std::uint64_t>(task->speed.load()))) + L"/s";
         auto state = TaskStateText(task->state.load());
         std::wstring info;
         {
@@ -417,9 +415,8 @@ void ClientWindow::RefreshTasks() {
         ListView_SetItemText(taskList_, i, 2, local.data());
         ListView_SetItemText(taskList_, i, 3, remote.data());
         ListView_SetItemText(taskList_, i, 4, progress.data());
-        ListView_SetItemText(taskList_, i, 5, speed.data());
-        ListView_SetItemText(taskList_, i, 6, state.data());
-        ListView_SetItemText(taskList_, i, 7, info.data());
+        ListView_SetItemText(taskList_, i, 5, state.data());
+        ListView_SetItemText(taskList_, i, 6, info.data());
 
         if (task->id == selectedTaskId) {
             selectedRow = i;

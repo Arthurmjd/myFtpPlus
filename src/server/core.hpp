@@ -1,6 +1,7 @@
 #pragma once
 
 #include "shared/common.hpp"
+#include "user_store.hpp"
 
 #include <unordered_map>
 
@@ -19,7 +20,6 @@ public:
     std::vector<UserRecord> SnapshotUsers();
     bool UpsertUser(const UserRecord& input, const std::string& plainPassword, std::string& error);
     bool DeleteUser(const std::string& username, std::string& error);
-    std::wstring ReadLogs() const;
 
 private:
     struct ResolvedPath {
@@ -29,9 +29,9 @@ private:
 
     void EnsureLayout();
     void EnsureUserDirsLocked(const UserRecord& user);
+    std::vector<UserRecord> SeedUsers() const;
     void LoadUsersLocked();
-    void SaveUsersLocked();
-    void AppendLog(const std::string& user, const std::string& action, const std::string& detail) const;
+    bool SaveUsersLocked(std::string& error);
     std::optional<SessionInfo> FindSession(std::uint32_t sessionId);
     std::optional<ResolvedPath> ResolvePath(const SessionInfo& session, const std::string& rawPath, std::uint32_t bit,
                                             bool allowMissing = false);
@@ -61,14 +61,15 @@ private:
 
     std::filesystem::path dataDir_;
     std::filesystem::path rootDir_;
-    std::filesystem::path usersFile_;
-    std::filesystem::path logFile_;
+    std::filesystem::path usersDbFile_;
+    std::filesystem::path legacyUsersFile_;
+    UserStore userStore_;
 
     mutable std::mutex mu_;
-    mutable std::mutex logMu_;
     std::unordered_map<std::string, UserRecord> users_;
     std::unordered_map<std::uint32_t, SessionInfo> sessions_;
     std::vector<SOCKET> clientSockets_;
+    std::string userStoreError_;
 
     std::atomic<bool> running_{false};
     std::atomic<int> activeClients_{0};

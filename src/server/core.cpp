@@ -14,10 +14,6 @@ public:
         CloseSocket(sock_);
     }
 
-    SOCKET Get() const {
-        return sock_;
-    }
-
 private:
     SOCKET sock_;
 };
@@ -35,16 +31,6 @@ public:
 private:
     std::atomic<int>& counter_;
 };
-
-std::string ReadFileUtf8(const std::filesystem::path& path) {
-    std::ifstream in(path);
-    if (!in) {
-        return "";
-    }
-    std::ostringstream out;
-    out << in.rdbuf();
-    return out.str();
-}
 
 UserRecord MakeDefaultUser(const std::string& name, const std::string& plainPassword, bool admin = false) {
     UserRecord user;
@@ -67,13 +53,21 @@ std::vector<PermissionRule> AnonymousRules() {
     return ParseRuleSpec("/public:R;/download:R");
 }
 
+bool IsValidUserName(const std::string& username) {
+    if (username.empty() || username == "." || username == "..") {
+        return false;
+    }
+    return username.find_first_of("\\/\t\r\n") == std::string::npos;
+}
+
 }  // namespace
 
 ServerCore::ServerCore()
     : dataDir_(std::filesystem::current_path() / L"data"),
       rootDir_(dataDir_ / L"server_root"),
-      usersFile_(dataDir_ / L"users.tsv"),
-      logFile_(dataDir_ / L"server.log") {
+      usersDbFile_(dataDir_ / L"users.db"),
+      legacyUsersFile_(dataDir_ / L"users.tsv"),
+      userStore_(usersDbFile_, legacyUsersFile_) {
     EnsureLayout();
 }
 
@@ -96,7 +90,6 @@ bool ServerCore::Start(int port, std::string& error) {
     listenSock_ = listenSocket;
     running_ = true;
     loopThread_ = std::thread([this] { Loop(); });
-    AppendLog("system", "server_start", "listen " + std::to_string(port_));
     return true;
 }
 
@@ -119,7 +112,6 @@ void ServerCore::Stop() {
     clientSockets_.clear();
     sessions_.clear();
     activeClients_ = 0;
-    AppendLog("system", "server_stop", "stopped");
 }
 
 bool ServerCore::IsRunning() const {
@@ -127,9 +119,20 @@ bool ServerCore::IsRunning() const {
 }
 
 std::wstring ServerCore::StatusText() const {
+    std::string storageError;
+    {
+        std::lock_guard lock(mu_);
+        storageError = userStoreError_;
+    }
+
     std::ostringstream out;
     out << "端口: " << port_ << "  连接: " << activeClients_.load() << "  传输线程: " << activeTransfers_.load()
-        << "  服务: " << (running_ ? "运行中" : "已停止");
+        << "  服务: " << (running_ ? "运行中" : "已停止") << "  用户存储: ";
+    if (storageError.empty()) {
+        out << "SQLite";
+    } else {
+        out << "SQLite 异常 - " << storageError;
+    }
     return Utf8ToWide(out.str());
 }
 
@@ -147,25 +150,27 @@ std::vector<UserRecord> ServerCore::SnapshotUsers() {
 }
 
 bool ServerCore::UpsertUser(const UserRecord& input, const std::string& plainPassword, std::string& error) {
-    if (input.username.empty()) {
-        error = "用户名不能为空";
+    auto user = input;
+    user.username = Trim(user.username);
+    if (!IsValidUserName(user.username)) {
+        error = "用户名不能为空，且不能包含斜杠或特殊路径";
         return false;
     }
-    if (input.home.empty() || NormalizeVirtualPath(input.home).empty()) {
-        error = "主目录无效";
+    if (user.home.empty() || NormalizeVirtualPath(user.home).empty()) {
+        error = "用户目录无效";
         return false;
     }
 
-    auto user = input;
     user.home = NormalizeVirtualPath(user.home);
     user.ruleSpec = Trim(user.ruleSpec);
     user.rules = ParseRuleSpec(user.ruleSpec);
     if (user.rules.empty()) {
-        error = "权限规则不能为空";
+        error = "权限配置不能为空";
         return false;
     }
 
     std::lock_guard lock(mu_);
+    const auto backup = users_;
     const auto it = users_.find(user.username);
     if (it != users_.end()) {
         user.passwordHash = plainPassword.empty() ? it->second.passwordHash : Sha256String(plainPassword);
@@ -177,9 +182,12 @@ bool ServerCore::UpsertUser(const UserRecord& input, const std::string& plainPas
     }
 
     users_[user.username] = user;
-    SaveUsersLocked();
+    if (!SaveUsersLocked(error)) {
+        users_ = backup;
+        return false;
+    }
+
     EnsureUserDirsLocked(user);
-    AppendLog("admin", "save_user", user.username);
     return true;
 }
 
@@ -190,18 +198,17 @@ bool ServerCore::DeleteUser(const std::string& username, std::string& error) {
     }
 
     std::lock_guard lock(mu_);
+    const auto backup = users_;
     if (!users_.erase(username)) {
         error = "用户不存在";
         return false;
     }
 
-    SaveUsersLocked();
-    AppendLog("admin", "delete_user", username);
+    if (!SaveUsersLocked(error)) {
+        users_ = backup;
+        return false;
+    }
     return true;
-}
-
-std::wstring ServerCore::ReadLogs() const {
-    return Utf8ToWide(ReadFileUtf8(logFile_));
 }
 
 void ServerCore::EnsureLayout() {
@@ -223,36 +230,45 @@ void ServerCore::EnsureUserDirsLocked(const UserRecord& user) {
     std::filesystem::create_directories(rootDir_ / L"upload" / Utf8ToWide(user.username));
 }
 
+std::vector<UserRecord> ServerCore::SeedUsers() const {
+    return {
+        MakeDefaultUser("admin", "admin123", true),
+        MakeDefaultUser("demo", "demo123", false),
+    };
+}
+
 void ServerCore::LoadUsersLocked() {
     std::lock_guard lock(mu_);
     users_.clear();
+    userStoreError_.clear();
 
-    auto users = LoadUsers(usersFile_);
-    if (users.empty()) {
-        users.push_back(MakeDefaultUser("admin", "admin123", true));
-        users.push_back(MakeDefaultUser("demo", "demo123", false));
-        SaveUsers(usersFile_, users);
+    std::vector<UserRecord> loadedUsers;
+    std::string error;
+    if (!userStore_.Load(loadedUsers, SeedUsers(), error)) {
+        userStoreError_ = error;
+        loadedUsers = SeedUsers();
     }
 
-    for (const auto& user : users) {
+    for (const auto& user : loadedUsers) {
         users_[user.username] = user;
         EnsureUserDirsLocked(user);
     }
 }
 
-void ServerCore::SaveUsersLocked() {
+bool ServerCore::SaveUsersLocked(std::string& error) {
     std::vector<UserRecord> users;
     users.reserve(users_.size());
     for (const auto& [_, user] : users_) {
         users.push_back(user);
     }
-    SaveUsers(usersFile_, users);
-}
 
-void ServerCore::AppendLog(const std::string& user, const std::string& action, const std::string& detail) const {
-    std::lock_guard lock(logMu_);
-    std::ofstream out(logFile_, std::ios::app);
-    out << MakeLine({NowString(), user, action, detail});
+    if (!userStore_.Save(users, error)) {
+        userStoreError_ = error;
+        return false;
+    }
+
+    userStoreError_.clear();
+    return true;
 }
 
 std::optional<SessionInfo> ServerCore::FindSession(std::uint32_t sessionId) {
@@ -398,7 +414,6 @@ void ServerCore::HandleLogin(SOCKET sock, const NetPacket& req) {
         std::lock_guard lock(mu_);
         const auto it = users_.find(userIt->second);
         if (it == users_.end() || !it->second.enabled || it->second.passwordHash != Sha256String(passIt->second)) {
-            AppendLog(userIt->second, "login_fail", "invalid credential");
             ReplyError(sock, req, "用户名或密码错误");
             return;
         }
@@ -415,7 +430,6 @@ void ServerCore::HandleLogin(SOCKET sock, const NetPacket& req) {
         sessions_[session.id] = session;
     }
 
-    AppendLog(session.username, "login_ok", session.home);
     SendPacket(sock, Cmd::LoginOk, req.seq, session.id,
                SerializePairs({
                    {"session", std::to_string(session.id)},
@@ -447,14 +461,13 @@ void ServerCore::HandleList(SOCKET sock, const NetPacket& req) {
 
     const auto resolved = ResolvePath(*session, normalized, PermRead);
     if (!resolved) {
-        AppendLog(session->username, "deny", "list " + requested);
         ReplyError(sock, req, "目录不可访问");
         return;
     }
 
     std::error_code ec;
     if (!std::filesystem::is_directory(resolved->real, ec)) {
-        ReplyError(sock, req, "不是目录");
+        ReplyError(sock, req, "目标不是目录");
         return;
     }
 
@@ -488,7 +501,6 @@ void ServerCore::HandleMakeDir(SOCKET sock, const NetPacket& req) {
         return;
     }
 
-    AppendLog(session->username, "mkdir", resolved->virtualPath);
     ReplyOk(sock, req);
 }
 
@@ -518,7 +530,6 @@ void ServerCore::HandleRemove(SOCKET sock, const NetPacket& req) {
         return;
     }
 
-    AppendLog(session->username, "remove", resolved->virtualPath);
     ReplyOk(sock, req);
 }
 
@@ -555,7 +566,6 @@ void ServerCore::HandleRename(SOCKET sock, const NetPacket& req) {
         return;
     }
 
-    AppendLog(session->username, "rename", resolved->virtualPath + " -> " + newName);
     ReplyOk(sock, req);
 }
 
@@ -688,7 +698,6 @@ void ServerCore::UploadWorker(SOCKET sock, const NetPacket& req) {
 
         SendPacket(sock, Cmd::UploadDone, packet.seq, packet.session,
                    SerializePairs({{"size", std::to_string(offset)}, {"sha256", finalHash}}));
-        AppendLog(session->username, "upload", resolved->virtualPath);
         return;
     }
 }
@@ -754,7 +763,6 @@ void ServerCore::DownloadWorker(SOCKET sock, const NetPacket& req) {
 
     SendPacket(sock, Cmd::DownloadDone, req.seq, req.session,
                SerializePairs({{"size", std::to_string(total)}, {"sha256", Sha256File(resolved->real)}}));
-    AppendLog(session->username, "download", resolved->virtualPath);
 }
 
 void ServerCore::Loop() {
